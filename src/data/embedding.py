@@ -2,6 +2,7 @@
 import os
 import duckdb
 import pandas
+import uuid
 
 con = duckdb.connect(database=":memory:")
 
@@ -20,11 +21,11 @@ columns_to_keep = [
 
 notices_raw = notices_raw[columns_to_keep]
 
-# %%
+
 notices_raw
 notices_raw.loc[notices_raw["type"] == "Poste"].isna().sum()
 
-# %%
+
 from dataclasses import dataclass
 import pandas as pd
 from typing import List, Dict, Any, Optional
@@ -119,7 +120,7 @@ for _, row in df.iterrows():
     )
     chunk = doc.to_text_chunks()
     documents.append({
-                        "id": doc.code,
+                        "id": str(uuid.uuid4()),
                         "text": chunk["text"],
                         "metadata": {
                             "code": doc.code,
@@ -131,17 +132,7 @@ for _, row in df.iterrows():
 print(documents[6])
 
 
-# %% 
-from sentence_transformers import SentenceTransformer
 
-# %% 
-
-model = SentenceTransformer('all-MiniLM-L6-v2')
-
-# %% 
-sentences = ["Le chat dort.", "Un félin repose.", "Paris est en France."]
-embeddings = model.encode(sentences)
-embeddings.shape
 # %%
 
 from qdrant_client import QdrantClient
@@ -159,9 +150,56 @@ client_qdrant.get_collections()
 client_qdrant.recreate_collection(
     collection_name=collection_name,
     vectors_config=VectorParams(
-        size=100,
+        size=384, # Comme les embeddings de test
         distance=Distance.COSINE
     )
 )
 
+# %% 
 
+from sentence_transformers import SentenceTransformer
+model = SentenceTransformer('all-MiniLM-L6-v2')
+
+
+# sentences = ["Le chat dort.", "Un félin repose.", "Paris est en France."]
+# embeddings = model.encode(sentences)
+# embeddings.shape
+
+texts = [doc["text"] for doc in documents]
+
+# Générer les embeddings
+embeddings = model.encode(
+    texts,
+    show_progress_bar=True,
+    batch_size=56
+)
+
+# Créer les points pour Qdrant
+points = []
+for i, (doc, embedding) in enumerate(zip(documents, embeddings)):
+    points.append(
+        PointStruct(
+            id=doc["id"],
+            vector=embedding.tolist(),
+            payload={
+                "text": doc["text"],
+                **doc["metadata"]
+            }
+        )
+    )
+
+# Upload par batchs
+print(f"Uploading {len(points)} points to Qdrant...")
+batch_size = 5
+for i in range(0, len(points), batch_size):
+    batch = points[i:i + batch_size]
+    client_qdrant.upsert(
+        collection_name=collection_name,
+        points=batch
+    )
+    print(f"Uploaded batch {i//batch_size + 1}/{(len(points)-1)//batch_size + 1}")
+
+print("✓ Upload terminé!")
+
+
+# %%
