@@ -1,6 +1,7 @@
 # %%
 import os
 import duckdb
+import pandas
 
 con = duckdb.connect(database=":memory:")
 
@@ -27,8 +28,6 @@ notices_raw.loc[notices_raw["type"] == "Poste"].isna().sum()
 from dataclasses import dataclass
 import pandas as pd
 from typing import List, Dict, Any, Optional
-@dataclass
-from dataclasses import dataclass
 from typing import Optional, List, Dict
 
 @dataclass
@@ -57,7 +56,7 @@ class CoicopDocument:
         strategy: "code_only", "all_info", "all_info_no_exclusions"
         """
         chunk = {
-            "type": "title",
+            "type": strategy,
             "text": self.to_single_text(strategy),
             "code": self.code
         }
@@ -104,3 +103,43 @@ print(doc[6].to_text_chunks(strategy="code_only")["text"])
 print(doc[6].to_text_chunks(strategy="without_exclusions")["text"])
 print(doc[6].to_text_chunks()["text"])
 print(doc[6].to_single_text())
+
+
+# %%
+df = notices_raw[:10]
+documents = []
+for _, row in df.iterrows():
+    doc = CoicopDocument(
+        code=str(row['code']),
+        label_fr=str(row['label_fr']),
+        note_generale_fr=row.get('note_generale_fr'),
+        contenu_central_fr=row.get('contenu_central_fr'),
+        contenu_additionnel_fr=row.get('contenu_additionnel_fr'),
+        note_exclusion_fr=row.get('note_exclusion_fr')
+    )
+    chunk = doc.to_text_chunks()
+    documents.append({
+                        "id": doc.code,
+                        "text": chunk["text"],
+                        "metadata": {
+                            "code": doc.code,
+                            "label_fr": doc.label_fr,
+                            "strategy": chunk["type"],
+                        }
+                    })
+
+print(documents[6])
+
+
+# %% 
+from sentence_transformers import SentenceTransformer
+
+# %% 
+
+model = SentenceTransformer('all-MiniLM-L6-v2')
+
+# %% 
+sentences = ["Le chat dort.", "Un félin repose.", "Paris est en France."]
+embeddings = model.encode(sentences)
+embeddings.shape
+# %%
