@@ -143,3 +143,25 @@ sentences = ["Le chat dort.", "Un félin repose.", "Paris est en France."]
 embeddings = model.encode(sentences)
 embeddings.shape
 # %%
+
+from qdrant_client import QdrantClient
+from qdrant_client.models import Distance, VectorParams, PointStruct
+
+collection_name = "coicop_test"
+
+client_qdrant = QdrantClient(
+    url=os.environ["QDRANT_URL"], 
+    api_key=os.environ["QDRANT_API_KEY"],
+    port="443"
+)
+
+client_qdrant.get_collections()
+client_qdrant.recreate_collection(
+    collection_name=collection_name,
+    vectors_config=VectorParams(
+        size=100,
+        distance=Distance.COSINE
+    )
+)
+
+
