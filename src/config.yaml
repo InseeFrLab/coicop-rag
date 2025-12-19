@@ -10,6 +10,11 @@ embedding:
 retrieval:
   size: 5
 
+llm:
+  model_name: gpt-oss:20b
+  temperature: 0.1
+  max_tokens: 256
+
 coicop:
   path: "s3://projet-budget-famille/data/coicop-2018_envoi_rmes_20251022.csv"
 
