@@ -240,6 +240,28 @@ embeddings = model.encode(
 
 # Search 
 
+
+
+
+# CONFIGURATION -------------------------------------
+
+import s3fs
+import duckdb
+S3_ANNOTATIONS = "s3://projet-budget-famille/data/output-annotation-consolidated-2025-12-02/raw.parquet"
+
+fs = s3fs.S3FileSystem(endpoint_url="https://minio.lab.sspcloud.fr")
+con = duckdb.connect(database=":memory:")
+
+query_definition = f"SELECT * FROM read_parquet('{S3_ANNOTATIONS}')"
+annotations = con.sql(query_definition).to_df()
+annotations.loc[annotations["manual_from_books"]]
+searched_products = (
+    annotations[["product", "code", "coicop", "enseigne", "budget"]]
+    .sample(10, random_state=42)
+    .assign(id=lambda x: [str(uuid.uuid4()) for _ in range(len(x))])
+)
+searched_products = searched_products.to_dict(orient="records")
+
 search_texts = [
     "Food and non-alcoholic beverages",
     "Household appliances and maintenance",
@@ -259,10 +281,10 @@ search_texts = [
 ]
 
 search_embeddings = []
-for text in search_texts:
+for searched_product in searched_products:
     response = client.embeddings.create(
         model=embedding_model_name,
-        input=text
+        input=searched_product['product']
     )
     search_embeddings.append(response.data[0].embedding)
 
@@ -275,23 +297,23 @@ nb_points_retreived = 5
 
 # search_embedding = search_embeddings[6]
 
-found_texts = []
+found_qdrant_texts = []
 for search_embedding in search_embeddings:
     points = client_qdrant.query_points(
         collection_name=collection_name,
         query=search_embedding,
         limit=nb_points_retreived,
     )
-    found_texts.append([point["payload"]["text"] for point in points.model_dump()["points"]])
+    found_qdrant_texts.append([point["payload"]["text"] for point in points.model_dump()["points"]])
 
-len(found_texts)
-len(found_texts[5])
+len(found_qdrant_texts)
+len(found_qdrant_texts[5])
 
 # %%
 
-example_num = 6
-choices = found_texts[example_num]
-searched_product = search_texts[example_num]
+example_num = 7
+choices = found_qdrant_texts[example_num]
+searched_product = searched_products[example_num]
 
 system_prompt = """
     Tu es un expert en classification COICOP (Classification of Individual Consumption According to Purpose).
@@ -307,7 +329,7 @@ system_prompt = """
 """
 
 query = f"""
-Trouve à quel code de la classification correspond le produit suivant : {searched_product}
+Trouve à quel code de la classification correspond le produit suivant : "{searched_product["product"]}"{f" (acheté dans l'enseigne {searched_product['enseigne']}" if searched_product["enseigne"] is not None else ""})
 """
 
 user_prompt = f"""
