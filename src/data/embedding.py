@@ -287,7 +287,50 @@ for search_embedding in search_embeddings:
 len(found_texts)
 len(found_texts[5])
 
-
-
 # %%
 
+example_num = 6
+choices = found_texts[example_num]
+searched_product = search_texts[example_num]
+
+system_prompt = """
+    Tu es un expert en classification COICOP (Classification of Individual Consumption According to Purpose).
+    Ton rôle est d'aider à classifier des produits selon la nomenclature COICOP en te basant sur les codes pertinents fournis.
+
+    Instructions:
+    1. Analyse le produit demandé
+    2. Compare avec les codes COICOP fournis
+    3. Recommande le code le plus approprié
+    4. Justifie ton choix en expliquant pourquoi ce code correspond
+    5. Si plusieurs codes sont possibles, explique les nuances
+    6. Réponds en français de manière claire et concise
+"""
+
+query = f"""
+Trouve à quel code de la classification correspond le produit suivant : {searched_product}
+"""
+
+user_prompt = f"""
+Question: {query}\n\nListe des possibilités:\n{choices}
+"""
+
+messages = [
+    {"role": "system", "content": system_prompt},
+    {"role": "user", "content": user_prompt}
+]
+
+llm_model: str = "gpt-oss:120b"
+temperature = 0.1
+max_tokens = 512
+
+
+response = client.chat.completions.create(
+    model=llm_model,
+    messages=messages,
+    temperature=temperature,
+    max_tokens=max_tokens
+)
+
+answer = response.choices[0].message.content
+print(answer)
+# %%
