@@ -1,0 +1,10 @@
+# config.yaml
+qdrant:
+  collection_name: "coicop_test"
+
+embedding:
+  model_name: "qwen3-embedding:8b"
+  model_len: 4096
+
+coicop:
+  path: "s3://projet-budget-famille/data/coicop-2018_envoi_rmes_20251022.csv"
