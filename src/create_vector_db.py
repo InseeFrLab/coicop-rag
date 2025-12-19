@@ -1,30 +1,36 @@
+#TODO : use different embedding flavours (example : without exclusions) and 
+# strategies (ex: hierachical or flat)
 
 import os
 # os.chdir("coicop-rag")
 import duckdb
 import yaml
 import uuid
-from dataclasses import dataclass
-from typing import List, Dict, Optional
+import logging
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct
-from dotenv import load_dotenv
 from openai import OpenAI
-from src.data.coicop_document import CoicopDocument
+from data.coicop_document import CoicopDocument
 
-load_dotenv()
+# Config
 
-# DuckDB config
-con = duckdb.connect(database=":memory:")
-
-# Params
-qdrant_url = os.environ["QDRANT_URL"]
-qdrant_api_key = os.environ["QDRANT_API_KEY"]
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('coicop_rag.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
 with open("src/config.yaml", "r") as f:
     config = yaml.safe_load(f)
 
 # Set clients
+
+con = duckdb.connect(database=":memory:")
+
 client = OpenAI(
     api_key=os.environ["OLLAMA_API_KEY"],
     base_url=os.environ["OLLAMA_URL"]
@@ -37,11 +43,11 @@ client_qdrant = QdrantClient(
     port=os.environ["QDRANT_API_PORT"]
 )
 
-# Import coicop notices
+logger.info("Starting data import process")
 
 query = f"""
     SELECT
-        * 
+        *
     FROM read_csv('{config["coicop"]["path"]}');
 """
 notices_raw = duckdb.sql(query).to_df()
@@ -54,6 +60,7 @@ columns_to_keep = [
 notices_raw = notices_raw[columns_to_keep]
 notices_raw = notices_raw.to_dict(orient="records")
 
+logger.info(f"Loaded {len(notices_raw)} notices from CSV")
 
 # Create documents to embed and upload to vectorial database
 documents = []
@@ -77,11 +84,7 @@ for notice in notices_raw:
                         }
                     })
 
-# print(documents[6])
-
-
-
-#client_qdrant.get_collections()
+logger.info(f"Created {len(documents)} document chunks")
 
 client_qdrant.recreate_collection(
     collection_name=config["qdrant"]["collection_name"],
@@ -91,20 +94,26 @@ client_qdrant.recreate_collection(
     )
 )
 
+logger.info(f"Recreated Qdrant collection: {config['qdrant']['collection_name']}")
+
 embeddings = []
-for document in documents:
-    response = client.embeddings.create(
-        model=config["embedding"]["model_name"],
-        input=document["text"]
-    )
-    embeddings.append(response.data[0].embedding)
+for i, document in enumerate(documents):
+    try:
+        response = client.embeddings.create(
+            model=config["embedding"]["model_name"],
+            input=document["text"]
+        )
+        embeddings.append(response.data[0].embedding)
+        if (i + 1) % 10 == 0:
+            logger.info(f"Processed {i + 1}/{len(documents)} embeddings")
+    except Exception as e:
+        logger.error(f"Failed to generate embedding for document {i}: {str(e)}")
+        continue
 
-print(len(embeddings))
-print(len(embeddings[0]))
+logger.info(f"Generated {len(embeddings)} embeddings")
 
- 
+# Create points for qdrant
 
-# Créer les points pour Qdrant
 points = []
 for i, (document, embedding) in enumerate(zip(documents, embeddings)):
     points.append(
@@ -118,16 +127,23 @@ for i, (document, embedding) in enumerate(zip(documents, embeddings)):
         )
     )
 
-# Upload par batchs
-print(f"Uploading {len(points)} points to Qdrant...")
-batch_size = 5
-for i in range(0, len(points), batch_size):
-    batch = points[i:i + batch_size]
-    client_qdrant.upsert(
-        collection_name=config["qdrant"]["collection_name"],
-        points=batch
-    )
-    print(f"Uploaded batch {i//batch_size + 1}/{(len(points)-1)//batch_size + 1}")
+logger.info(f"Prepared {len(points)} points for upload")
 
-print("✓ Upload terminé!")
+upload_batch_size = config["qdrant"]["upload_batch_size"]
+
+logger.info(f"Starting upload using batches of size {upload_batch_size}")
+
+for i in range(0, len(points), upload_batch_size):
+    batch = points[i:i + upload_batch_size]
+    try:
+        client_qdrant.upsert(
+            collection_name=config["qdrant"]["collection_name"],
+            points=batch
+        )
+        logger.info(f"Uploaded batch {i//upload_batch_size + 1}/{(len(points)-1)//upload_batch_size + 1}")
+    except Exception as e:
+        logger.error(f"Failed to upload batch {i//upload_batch_size + 1}: {str(e)}")
+        continue
+
+logger.info("✓ Upload completed successfully")
 

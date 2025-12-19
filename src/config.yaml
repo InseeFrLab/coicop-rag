@@ -1,10 +1,18 @@
 # config.yaml
 qdrant:
   collection_name: "coicop_test"
+  upload_batch_size: 56
 
 embedding:
   model_name: "qwen3-embedding:8b"
   model_len: 4096
 
+retrieval:
+  size: 5
+
 coicop:
   path: "s3://projet-budget-famille/data/coicop-2018_envoi_rmes_20251022.csv"
+
+annotations:
+  s3_path: "s3://projet-budget-famille/data/output-annotation-consolidated-2025-12-02/raw.parquet"
+  sample_size: 20
