@@ -3,8 +3,27 @@ import os
 import duckdb
 import pandas
 import uuid
+from dataclasses import dataclass
+import pandas as pd
+from typing import List, Dict, Any, Optional
+from typing import Optional, List, Dict
+from qdrant_client import QdrantClient
+from qdrant_client.models import Distance, VectorParams, PointStruct
 
+# DuckDB config
 con = duckdb.connect(database=":memory:")
+
+# Qdrant config
+client_qdrant = QdrantClient(
+    url=os.environ["QDRANT_URL"], 
+    api_key=os.environ["QDRANT_API_KEY"],
+    port="443"
+)
+
+# Params
+collection_name = "coicop_test"
+
+# Import coicop notices
 
 s3_path = "s3://projet-budget-famille/data/coicop-2018_envoi_rmes_20251022.csv"
 query = f"""
@@ -21,15 +40,10 @@ columns_to_keep = [
 
 notices_raw = notices_raw[columns_to_keep]
 
+# notices_raw
+# notices_raw.loc[notices_raw["type"] == "Poste"].isna().sum()
 
-notices_raw
-notices_raw.loc[notices_raw["type"] == "Poste"].isna().sum()
-
-
-from dataclasses import dataclass
-import pandas as pd
-from typing import List, Dict, Any, Optional
-from typing import Optional, List, Dict
+# Define a CoicopDocument object
 
 @dataclass
 class CoicopDocument:
@@ -50,18 +64,6 @@ class CoicopDocument:
         if self.contenu_additionnel_fr:
             parts.append(self.contenu_additionnel_fr.strip())
         return ". ".join(parts) if parts else None
-    
-    def to_text_chunks(self, strategy: str = "all_info") -> List[Dict[str, str]]:
-        """
-        Convert to text chunks for embedding according to strategy.
-        strategy: "code_only", "all_info", "all_info_no_exclusions"
-        """
-        chunk = {
-            "type": strategy,
-            "text": self.to_single_text(strategy),
-            "code": self.code
-        }
-        return chunk  
         
     def to_single_text(self, strategy: str = "all_info") -> str:
         """
@@ -83,31 +85,45 @@ class CoicopDocument:
         
         # Join sections with two line breaks for clear separation in embeddings
         return "\n\n".join(lines)
+    
+    def to_text_chunks(self, strategy: str = "all_info") -> List[Dict[str, str]]:
+        """
+        Convert to text chunks for embedding according to strategy.
+        """
+        chunk = {
+            "type": strategy,
+            "text": self.to_single_text(strategy),
+            "code": self.code
+        }
+        return chunk  
 
 # %%
-df = notices_raw[:10]
-doc = []
-for _, row in df.iterrows():
-        doc.append(
-            CoicopDocument(
-                code=str(row['code']),
-                label_fr=str(row['label_fr']),
-                note_generale_fr=row.get('note_generale_fr'),
-                contenu_central_fr=row.get('contenu_central_fr'),
-                contenu_additionnel_fr=row.get('contenu_additionnel_fr'),
-                note_exclusion_fr=row.get('note_exclusion_fr')
-            )
-        )
+# df = notices_raw[:10]
+# doc = []
+# for _, row in df.iterrows():
+#         doc.append(
+#             CoicopDocument(
+#                 code=str(row['code']),
+#                 label_fr=str(row['label_fr']),
+#                 note_generale_fr=row.get('note_generale_fr'),
+#                 contenu_central_fr=row.get('contenu_central_fr'),
+#                 contenu_additionnel_fr=row.get('contenu_additionnel_fr'),
+#                 note_exclusion_fr=row.get('note_exclusion_fr')
+#             )
+#         )
+
+
+# print(doc[6].to_text_chunks(strategy="code_only")["text"])
+# print(doc[6].to_text_chunks(strategy="without_exclusions")["text"])
+# print(doc[6].to_text_chunks()["text"])
+# print(doc[6].to_single_text())
+
 
 # %%
-print(doc[6].to_text_chunks(strategy="code_only")["text"])
-print(doc[6].to_text_chunks(strategy="without_exclusions")["text"])
-print(doc[6].to_text_chunks()["text"])
-print(doc[6].to_single_text())
 
+# Create documents to embed and upload to vectorial databse
 
-# %%
-df = notices_raw[:10]
+df = notices_raw[:30]
 documents = []
 for _, row in df.iterrows():
     doc = CoicopDocument(
@@ -131,59 +147,54 @@ for _, row in df.iterrows():
 
 print(documents[6])
 
+# %%
+from dotenv import load_dotenv
+load_dotenv()
+from openai import OpenAI
+
+client = OpenAI(
+    api_key=os.environ["OLLAMA_API_KEY"],
+    base_url="https://llm.lab.sspcloud.fr/api"
+)
+embedding_model_name = "qwen3-embedding:8b"
+embedding_model_len = 4096
 
 
 # %%
 
-from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, VectorParams, PointStruct
+#client_qdrant.get_collections()
 
-collection_name = "coicop_test"
-
-client_qdrant = QdrantClient(
-    url=os.environ["QDRANT_URL"], 
-    api_key=os.environ["QDRANT_API_KEY"],
-    port="443"
-)
-
-client_qdrant.get_collections()
 client_qdrant.recreate_collection(
     collection_name=collection_name,
     vectors_config=VectorParams(
-        size=384, # Comme les embeddings de test
+        size=embedding_model_len,
         distance=Distance.COSINE
     )
 )
 
+embeddings = []
+for document in documents:
+    response = client.embeddings.create(
+        model=embedding_model_name,
+        input=document["text"]
+    )
+    embeddings.append(response.data[0].embedding)
+
+print(len(embeddings))
+print(len(embeddings[0]))
+
 # %% 
-
-from sentence_transformers import SentenceTransformer
-model = SentenceTransformer('all-MiniLM-L6-v2')
-
-
-# sentences = ["Le chat dort.", "Un félin repose.", "Paris est en France."]
-# embeddings = model.encode(sentences)
-# embeddings.shape
-
-texts = [doc["text"] for doc in documents]
-
-# Générer les embeddings
-embeddings = model.encode(
-    texts,
-    show_progress_bar=True,
-    batch_size=56
-)
 
 # Créer les points pour Qdrant
 points = []
-for i, (doc, embedding) in enumerate(zip(documents, embeddings)):
+for i, (document, embedding) in enumerate(zip(documents, embeddings)):
     points.append(
         PointStruct(
-            id=doc["id"],
-            vector=embedding.tolist(),
+            id=document["id"],
+            vector=embedding,
             payload={
-                "text": doc["text"],
-                **doc["metadata"]
+                "text": document["text"],
+                **document["metadata"]
             }
         )
     )
@@ -202,4 +213,81 @@ for i in range(0, len(points), batch_size):
 print("✓ Upload terminé!")
 
 
+
+
+# %% 
+
+# from sentence_transformers import SentenceTransformer
+# model = SentenceTransformer('all-MiniLM-L6-v2')
+
+# sentences = ["Le chat dort.", "Un félin repose.", "Paris est en France."]
+# embeddings = model.encode(sentences)
+# embeddings.shape
+
+texts = [doc["text"] for doc in documents]
+
+# Générer les embeddings
+embeddings = model.encode(
+    texts,
+    show_progress_bar=True,
+    batch_size=56
+)
+
+
+
+
 # %%
+
+# Search 
+
+search_texts = [
+    "Food and non-alcoholic beverages",
+    "Household appliances and maintenance",
+    "Clothing and footwear",
+    "Housing and household services",
+    "Health",
+    "Transport",
+    "Communication",
+    "Recreation and culture",
+    "Education",
+    "Restaurants and hotels",
+    "Financial services",
+    "Personal care and effects",
+    "Miscellaneous goods and services",
+    "Environmental protection",
+    "Other services"
+]
+
+search_embeddings = []
+for text in search_texts:
+    response = client.embeddings.create(
+        model=embedding_model_name,
+        input=text
+    )
+    search_embeddings.append(response.data[0].embedding)
+
+print(len(search_embeddings))
+print(len(search_embeddings[0]))
+
+# Search one by one (to batch !)
+
+nb_points_retreived = 5
+
+# search_embedding = search_embeddings[6]
+
+found_texts = []
+for search_embedding in search_embeddings:
+    points = client_qdrant.query_points(
+        collection_name=collection_name,
+        query=search_embedding,
+        limit=nb_points_retreived,
+    )
+    found_texts.append([point["payload"]["text"] for point in points.model_dump()["points"]])
+
+len(found_texts)
+len(found_texts[5])
+
+
+
+# %%
+
