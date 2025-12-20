@@ -124,7 +124,7 @@ for i, searched_product in enumerate(searched_products):
 print("Starting generation")
 
 llm_responses = []
-for message in messages:
+for message in tqdm(messages, desc="LLM generation"):
     llm_responses.append(
         client_llm.chat.completions.create(
             model=config["llm"]["model_name"],
