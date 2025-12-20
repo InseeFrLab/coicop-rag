@@ -1,6 +1,7 @@
 import os
 # os.chdir("coicop-rag")
 import yaml
+import datetime
 import uuid
 from tqdm import tqdm
 import duckdb
@@ -140,5 +141,17 @@ for llm_response in llm_responses:
         extract_json_from_response(content)
     )
 
-# Must be same order !
-ids = [searched_product["id"] for searched_product in searched_products]
+# Evaluation (must be same order !)
+
+rows = []
+for i in range(len(llm_responses_parsed)):
+    pred = llm_responses_parsed[i]
+    annotation = searched_products[i]
+    row = pred | annotation
+    row["good_pred"] = row["code"] == row["nace2025"]
+    rows.append(row)
+
+df_eval = pd.DataFrame(rows)
+
+timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+con.sql(f"COPY df_eval TO '{config['eval']['s3_path']}_{timestamp}.parquet' (FORMAT PARQUET)")
