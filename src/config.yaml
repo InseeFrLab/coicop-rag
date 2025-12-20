@@ -20,7 +20,7 @@ coicop:
 
 annotations:
   s3_path: "s3://projet-budget-famille/data/output-annotation-consolidated-2025-12-02/raw.parquet"
-  sample_size: 20
+  sample_size: null
 
 eval:
   s3_path: "s3://projet-budget-famille/data/rag/eval_test.parquet"

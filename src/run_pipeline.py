@@ -7,10 +7,9 @@ from tqdm import tqdm
 import duckdb
 import pandas as pd
 from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, VectorParams, PointStruct
 from openai import OpenAI
 from langfuse import Langfuse
-from src.data.parsing import extract_json_from_response
+from data.parsing import extract_json_from_response
 with open("src/config.yaml", "r") as f:
     config = yaml.safe_load(f)
 
@@ -122,6 +121,8 @@ for i, searched_product in enumerate(searched_products):
 # for message in messages:
 #     print(message[1]["content"])
 
+print("Starting generation")
+
 llm_responses = []
 for message in messages:
     llm_responses.append(
@@ -134,6 +135,8 @@ for message in messages:
         )
     )
 
+print("Parsing LLM responses")
+
 llm_responses_parsed = []
 for llm_response in llm_responses:
     content = llm_response.choices[0].message.content
@@ -143,15 +146,19 @@ for llm_response in llm_responses:
 
 # Evaluation (must be same order !)
 
+print("Create an evaluation df")
+
 rows = []
 for i in range(len(llm_responses_parsed)):
     pred = llm_responses_parsed[i]
     annotation = searched_products[i]
     row = pred | annotation
-    row["good_pred"] = row["code"] == row["nace2025"]
+    row["good_pred"] = (row["code"] == row["coicop"])
     rows.append(row)
 
 df_eval = pd.DataFrame(rows)
 
 timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 con.sql(f"COPY df_eval TO '{config['eval']['s3_path']}_{timestamp}.parquet' (FORMAT PARQUET)")
+
+print("All done !")
