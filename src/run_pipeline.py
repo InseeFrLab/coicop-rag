@@ -9,7 +9,7 @@ from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct
 from openai import OpenAI
 from langfuse import Langfuse
-
+from src.data.parsing import extract_json_from_response
 with open("src/config.yaml", "r") as f:
     config = yaml.safe_load(f)
 
@@ -29,10 +29,11 @@ client_llm = OpenAI(
     api_key=os.environ["OLLAMA_API_KEY"],
     base_url=os.environ["OLLAMA_URL"]
 )
+# import dotenv
+# dotenv.load_dotenv()
 
 # Import prompt template
 prompt_template = Langfuse().get_prompt("prompt-multi-level", label="latest")
-
 
 # Import searched products 
 
@@ -70,7 +71,8 @@ print(f"Embedding dimension : {len(search_embeddings[0])}")
 # Search one by one (to batch !)
 
 qdrant_results_texts = []
-qdrant_results_codes= []
+qdrant_results_codes = []
+
 for search_embedding in tqdm(search_embeddings, desc="Vectorial search"):
     points = client_qdrant.query_points(
         collection_name=config["qdrant"]["collection_name"],
@@ -85,16 +87,16 @@ for search_embedding in tqdm(search_embeddings, desc="Vectorial search"):
         [point["payload"]["code"] for point in points.model_dump()["points"]]
     )
 
-print(f"Number of vectorial searches done : {len(qdrant_results)}")
-print(f"Number of points returns per search : {len(qdrant_results[0])}")
+print(f"Number of vectorial searches done : {len(qdrant_results_texts)}")
+print(f"Number of points returns per search : {len(qdrant_results_texts[0])}")
 
 
 # get prompts ----------------------
 
-example_num = 8
-choices_texts = qdrant_results_texts[example_num]
-choices_codes = qdrant_results_codes[example_num]
-searched_product = searched_products[example_num]
+# example_num = 8
+# choices_texts = qdrant_results_texts[example_num]
+# choices_codes = qdrant_results_codes[example_num]
+# searched_product = searched_products[example_num]
 
 # import dotenv
 # dotenv.load_dotenv()
@@ -104,7 +106,7 @@ for i, searched_product in enumerate(searched_products):
     if searched_product["enseigne"]:
         enseigne_bloc = f"# Pour information, ce produit a été acheté dans cette enseigne : {searched_product["enseigne"]}"
     else:
-        enseigne_bloc=None
+        enseigne_bloc = None
     
     messages.append(
         prompt_template.compile(
@@ -116,8 +118,8 @@ for i, searched_product in enumerate(searched_products):
     )
 # print(messages[0][1]["content"])
 
-for message in messages:
-    print(message[1]["content"])
+# for message in messages:
+#     print(message[1]["content"])
 
 llm_responses = []
 for message in messages:
@@ -126,10 +128,17 @@ for message in messages:
             model=config["llm"]["model_name"],
             messages=message,
             temperature=config["llm"]["temperature"],
-            max_tokens=config["llm"]["max_tokens"]
+            max_tokens=config["llm"]["max_tokens"],
+            response_format={"type": "json_object"}
         )
     )
 
+llm_responses_parsed = []
 for llm_response in llm_responses:
-    print(llm_response.choices[0].message.content)
+    content = llm_response.choices[0].message.content
+    llm_responses_parsed.append(
+        extract_json_from_response(content)
+    )
 
+# Must be same order !
+ids = [searched_product["id"] for searched_product in searched_products]
