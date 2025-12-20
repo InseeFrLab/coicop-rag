@@ -153,7 +153,7 @@ for i in range(len(llm_responses_parsed)):
     pred = llm_responses_parsed[i]
     annotation = searched_products[i]
     row = pred | annotation
-    row["good_pred"] = (row["code"] == row["coicop"])
+    row["good_pred"] = (row["code"] == row["coicop_pred"])
     rows.append(row)
 
 df_eval = pd.DataFrame(rows)
