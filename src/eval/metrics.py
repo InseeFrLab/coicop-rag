@@ -47,6 +47,7 @@ def calculate_accuracy_at_level(
     """
     correct = 0
     total = 0
+    result_list = []
     
     for record in records:
         pred_code = record.get(predicted_col)
@@ -57,19 +58,21 @@ def calculate_accuracy_at_level(
         label_truncated = truncate_code(label_code, level)
         
         # Skip if either truncation failed
-        if pred_truncated is None or label_truncated is None:
-            continue
+        # if pred_truncated is None or label_truncated is None:
+        #     continue
         
         # Compare truncated codes
+        result = (pred_truncated == label_truncated)
+        result_list.append(result)
         total += 1
-        if pred_truncated == label_truncated:
+        if result:
             correct += 1
     
     # Calculate accuracy
     if total == 0:
         return 0.0
     
-    return correct / total
+    return correct / total, result_list
 
 
 def filter_records(
@@ -175,7 +178,7 @@ def compute_hierarchical_metrics(
         
         # Calculate accuracy at each hierarchical level
         for level in range(1, 6):
-            accuracy = calculate_accuracy_at_level(
+            accuracy, _ = calculate_accuracy_at_level(
                 filtered_records,
                 predicted_col,
                 label_col,
