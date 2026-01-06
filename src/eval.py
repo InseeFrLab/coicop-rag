@@ -8,12 +8,15 @@ from src.eval.metrics import truncate_code, compute_hierarchical_metrics, calcul
 
 con = duckdb.connect(database=":memory:")
 
-s3_path = "s3://projet-budget-famille/data/rag/eval_test.parquet_20251220_154926.parquet"
-query_definition = f"SELECT * FROM read_parquet('{s3_path}')"
+s3_path_predictions = "s3://projet-budget-famille/data/rag/predictions_20260106_155655.parquet"
+s3_path_retrieved_codes = "s3://projet-budget-famille/data/rag/retrieved_codes_20260106_155655.parquet"
+query_definition = f"SELECT * FROM read_parquet('{s3_path_predictions}')"
 df_eval = con.sql(query_definition).to_df()
+query_definition = f"SELECT * FROM read_parquet('{s3_path_retrieved_codes}')"
+retrieved_codes = con.sql(query_definition).to_df()
 
 
-
+# %%
 
 pattern_code_pairs = [
     (r"fruits? et l[eé]gumes?", "01.1"),
@@ -43,8 +46,18 @@ df_eval = df_eval[
     )
 ]
 
+df_eval["in_retrieved"] = False
+for index, row in df_eval.iterrows():
+    id = row["id"]
+    list_retrieved_codes = (
+      retrieved_codes
+        .loc[retrieved_codes["id"] == id]
+        .drop('id', axis = 1)
+        .values.tolist()[0]
+    )
+    row["in_retrieved"] = (row["code"] in list_retrieved_codes)
 
-
+id = "a789822e-4c71-42bc-b2a4-7916f62202cf"
 
 df_eval.columns
 df_eval["good_pred"].mean()
@@ -67,6 +80,14 @@ accuracy, results = calculate_accuracy_at_level(
     "code",
     4
 )
+
+accuracy, results = calculate_accuracy_at_level(
+    df_eval[df_eval["confidence"]>0.7].to_dict('records'),
+    "coicop_pred",
+    "code",
+    4
+)
+
 
 df_eval["result"] = results
 
@@ -95,6 +116,18 @@ print(
           .sort_values(by="confidence", ascending=False)
           .head(20)
 )
+
+print(
+        df_eval
+          .loc[
+            ~df_eval["result"], 
+            ["product", "enseigne", "code", "coicop_pred","confidence"]
+            ]
+          .sample(20)
+)
+pd.reset_option("display.max_colwidth")
+str(df_eval.loc[df_eval["product"] == "billets avion", "reasons"].to_string(index=False))
+
 
 # Compute metrics
 metrics = compute_hierarchical_metrics(df_eval)

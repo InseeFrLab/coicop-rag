@@ -156,9 +156,26 @@ for i in range(len(llm_responses_parsed)):
     row["good_pred"] = (row["code"] == row["coicop_pred"])
     rows.append(row)
 
-df_eval = pd.DataFrame(rows)
+print("Export predictions")
 
 timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-con.sql(f"COPY df_eval TO '{config['eval']['s3_path']}_{timestamp}.parquet' (FORMAT PARQUET)")
+
+df_eval = pd.DataFrame(rows)
+df_retrieved_codes = pd.DataFrame(qdrant_results_codes)
+df_retrieved_codes["id"] = df_eval["id"]
+
+
+con.sql(f"""
+    COPY df_eval 
+    TO '{config['predictions']['s3_path'].format(timestamp=timestamp)}'
+    (FORMAT PARQUET)
+""")
+
+con.sql(f"""
+    COPY df_retrieved_codes 
+    TO '{config['predictions']['s3_path_retrieved_codes'].format(timestamp=timestamp)}'
+    (FORMAT PARQUET)
+""")
+
 
 print("All done !")
