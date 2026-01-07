@@ -8,7 +8,15 @@ os.chdir("..")
 import re
 import duckdb
 import pandas as pd
-from src.eval.metrics import truncate_code, compute_hierarchical_metrics, calculate_accuracy_at_level, print_metrics_report
+from src.eval.metrics import (
+  truncate_code, 
+  compute_hierarchical_metrics, 
+  calculate_accuracy_at_level, 
+  print_metrics_report,
+  analyze_error_sources,
+  print_error_analysis,
+  export_metrics_to_list
+)
 pd.reset_option("display.max_colwidth")
 pd.set_option('display.max_rows', None)
 retrieval_size = 5
@@ -112,134 +120,8 @@ len(records_regex)
 
 
 
-# dev retrieval eval 
-
-from typing import Dict, List, Optional, Tuple
-
-
-def check_label_in_retrieved(
-    label_code: str,
-    retrieved_codes: List[str],
-    level: int
-) -> bool:
-    """
-    Check if the label code is present in the retrieved codes list at a given level
-    
-    Args:
-        label_code: Ground truth code
-        retrieved_codes: List of retrieved codes from RAG
-        level: Hierarchical level (1-5) to check
-    
-    Returns:
-        True if label is in retrieved codes at this level, False otherwise
-    """
-    if label_code is None or retrieved_codes is None:
-        return False
-    
-    # Truncate label to specified level
-    label_truncated = truncate_code(label_code, level)
-    if label_truncated is None:
-        return False
-    
-    # Check if any retrieved code matches at this level
-    for retrieved_code in retrieved_codes:
-        retrieved_truncated = truncate_code(retrieved_code, level)
-        if retrieved_truncated == label_truncated:
-            return True
-    
-    return False
-
-
-
-def calculate_accuracy_at_level(
-    records: List[Dict],
-    predicted_col: str,
-    label_col: str,
-    level: int,
-    retrieved_col: str = 'list_retrieved_codes'
-) -> Tuple[float, List[bool], float, float, List[bool]]:
-    """
-    Calculate accuracy at a specific hierarchical level with retrieval analysis
-    
-    Args:
-        records: List of dictionaries with predictions and labels
-        predicted_col: Key name for predicted code
-        label_col: Key name for labeled code
-        level: Hierarchical level (1-5)
-        retrieved_col: Key name for list of retrieved codes
-    
-    Returns:
-        Tuple containing:
-        - overall_accuracy: Overall accuracy (0.0 to 1.0)
-        - result_list: List of bool indicating if each prediction is correct
-        - retrieval_accuracy: Proportion of cases where label is in retrieved codes
-        - generation_accuracy_when_retrieved: Accuracy when label is in retrieved codes
-        - label_in_retrieved_list: List of bool indicating if label is in retrieved codes
-    """
-    correct = 0
-    total = 0
-    result_list = []
-    label_in_retrieved_list = []
-    
-    # For generation accuracy when retrieved
-    correct_when_retrieved = 0
-    total_when_retrieved = 0
-    
-    for record in records:
-        pred_code = record.get(predicted_col)
-        label_code = record.get(label_col)
-        retrieved_codes = record.get(retrieved_col, [])
-        
-        # Truncate codes to specified level
-        pred_truncated = truncate_code(pred_code, level)
-        label_truncated = truncate_code(label_code, level)
-        
-        # Skip if either truncation failed
-        # if pred_truncated is None or label_truncated is None:
-        #     result_list.append(False)
-        #     label_in_retrieved_list.append(False)
-        #     continue
-        
-        # Check if prediction is correct
-        is_correct = (pred_truncated == label_truncated)
-        result_list.append(is_correct)
-        
-        # Check if label is in retrieved codes
-        label_is_retrieved = check_label_in_retrieved(
-            label_code, 
-            retrieved_codes, 
-            level
-        )
-        label_in_retrieved_list.append(label_is_retrieved)
-        
-        # Update overall accuracy counters
-        total += 1
-        if is_correct:
-            correct += 1
-        
-        # Update generation accuracy when retrieved counters
-        if label_is_retrieved:
-            total_when_retrieved += 1
-            if is_correct:
-                correct_when_retrieved += 1
-    
-    # Calculate accuracies
-    overall_accuracy = correct / total if total > 0 else 0.0
-    retrieval_accuracy = sum(label_in_retrieved_list) / len(label_in_retrieved_list) if len(label_in_retrieved_list) > 0 else 0.0
-    generation_accuracy_when_retrieved = correct_when_retrieved / total_when_retrieved if total_when_retrieved > 0 else 0.0
-    
-    return (
-        overall_accuracy,
-        result_list,
-        retrieval_accuracy,
-        generation_accuracy_when_retrieved,
-        label_in_retrieved_list
-    )
-
-
-
 calculate_accuracy_at_level(
-    records_test,
+    records_rag,
     "coicop_pred",
     "code",
     4,
@@ -249,8 +131,20 @@ calculate_accuracy_at_level(
 
 metrics = compute_hierarchical_metrics(records_rag)
 
+print_metrics_report(metrics)
 
+error_analysis = analyze_error_sources(metrics)
+print_error_analysis(error_analysis)
 
+metrics_list = export_metrics_to_list(metrics)
+metrics_df = pd.DataFrame(metrics_list)
+
+print("\n" + "=" * 100)
+print("METRICS SUMMARY TABLE")
+print("=" * 100)
+print(metrics_df.to_string(index=False))
+
+# ----------------------------------------------
 df_eval.columns
 df_eval["good_pred"].mean()
 df_eval["parsed"].value_counts()

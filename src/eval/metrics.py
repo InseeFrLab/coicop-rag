@@ -190,30 +190,30 @@ def compute_hierarchical_metrics(
     label_col: str = "code",
     confidence_col: str = "confidence",
     codable_col: str = "codable",
-    parsed_col: str = "parsed"
-) -> Dict[str, Dict[str, float]]:
+    parsed_col: str = "parsed",
+    retrieved_col: str = "list_retrieved_codes"
+) -> Dict[str, Dict]:
     """
-    Compute hierarchical accuracy metrics for COICOP/NACE classification
+    Compute hierarchical accuracy metrics with retrieval analysis
     
     Args:
-        df: DataFrame with predictions and labels
+        records: List of dictionnaries
         product_col: Column name for product description
-        predicted_col: Column name for predicted code (e.g., '08.1.2.3.4')
+        predicted_col: Column name for predicted code
         label_col: Column name for labeled/ground truth code
         confidence_col: Column name for LLM confidence score
         codable_col: Column name for codability flag (True/False)
         parsed_col: Column name for parsing success flag (True/False)
+        retrieved_col: Column name for list of retrieved codes
     
     Returns:
-        Dictionary with four metric types, each containing accuracy at 5 levels:
+        Dictionary with metrics including retrieval analysis:
         {
             'all_raw': {
                 'level_1': float,
-                'level_2': float,
-                'level_3': float,
-                'level_4': float,
-                'level_5': float,
-                'n_samples': int
+                'level_1_retrieval_accuracy': float,
+                'level_1_generation_accuracy_when_retrieved': float,
+                ...
             },
             'all_parsed': {...},
             'codable_only': {...},
@@ -247,41 +247,61 @@ def compute_hierarchical_metrics(
         
         # Calculate accuracy at each hierarchical level
         for level in range(1, 6):
-            accuracy, _ = calculate_accuracy_at_level(
+            (
+                overall_acc,
+                result_list,
+                retrieval_acc,
+                generation_acc_when_retrieved,
+                label_in_retrieved_list
+            ) = calculate_accuracy_at_level(
                 filtered_records,
                 predicted_col,
                 label_col,
-                level
+                level,
+                retrieved_col
             )
-            results[filter_type][f'level_{level}'] = accuracy
+            
+            # Store all metrics
+            results[filter_type][f'level_{level}'] = overall_acc
+            results[filter_type][f'level_{level}_retrieval_accuracy'] = retrieval_acc
+            results[filter_type][f'level_{level}_generation_accuracy_when_retrieved'] = generation_acc_when_retrieved
     
     return results
 
 
 def print_metrics_report(metrics: Dict[str, Dict[str, float]]) -> None:
     """
-    Print a formatted report of the metrics
+    Print a formatted report of the metrics including retrieval analysis
     
     Args:
         metrics: Dictionary returned by compute_hierarchical_metrics
     """
-    print("=" * 80)
-    print("HIERARCHICAL CLASSIFICATION METRICS")
-    print("=" * 80)
+    print("=" * 100)
+    print("HIERARCHICAL CLASSIFICATION METRICS WITH RETRIEVAL ANALYSIS")
+    print("=" * 100)
     
     for metric_type, values in metrics.items():
-        print(f"\n{'─' * 80}")
+        print(f"\n{'─' * 100}")
         print(f"Metric Type: {metric_type.upper().replace('_', ' ')}")
-        print(f"{'─' * 80}")
+        print(f"{'─' * 100}")
         print(f"Number of samples: {values['n_samples']}")
         print()
+        print(f"{'Level':<8} {'Overall Acc':<15} {'Retrieval Acc':<18} {'Gen Acc (Retrieved)':<20}")
+        print(f"{'-'*8} {'-'*15} {'-'*18} {'-'*20}")
         
         for level in range(1, 6):
-            level_key = f'level_{level}'
-            accuracy = values[level_key]
-            print(f"  Level {level} Accuracy: {accuracy:.4f} ({accuracy*100:.2f}%)")
+            overall_acc = values[f'level_{level}']
+            retrieval_acc = values[f'level_{level}_retrieval_accuracy']
+            gen_acc = values[f'level_{level}_generation_accuracy_when_retrieved']
+            
+            print(
+                f"{level:<8} "
+                f"{overall_acc:<15.4f} "
+                f"{retrieval_acc:<18.4f} "
+                f"{gen_acc:<20.4f}"
+            )
     
-    print("\n" + "=" * 80)
+    print("\n" + "=" * 100)
 
 
 def export_metrics_to_list(metrics: Dict[str, Dict[str, float]]) -> List[Dict]:
@@ -301,8 +321,85 @@ def export_metrics_to_list(metrics: Dict[str, Dict[str, float]]) -> List[Dict]:
             rows.append({
                 'metric_type': metric_type,
                 'level': level,
-                'accuracy': values[f'level_{level}'],
+                'overall_accuracy': values[f'level_{level}'],
+                'retrieval_accuracy': values[f'level_{level}_retrieval_accuracy'],
+                'generation_accuracy_when_retrieved': values[f'level_{level}_generation_accuracy_when_retrieved'],
                 'n_samples': values['n_samples']
             })
     
     return rows
+
+
+def analyze_error_sources(metrics: Dict[str, Dict[str, float]]) -> Dict[str, Dict[str, float]]:
+    """
+    Analyze the proportion of errors due to retrieval vs generation
+    
+    Args:
+        metrics: Dictionary returned by compute_hierarchical_metrics
+    
+    Returns:
+        Dictionary with error analysis for each metric type and level
+    """
+    error_analysis = {}
+    
+    for metric_type, values in metrics.items():
+        error_analysis[metric_type] = {}
+        
+        for level in range(1, 6):
+            overall_acc = values[f'level_{level}']
+            retrieval_acc = values[f'level_{level}_retrieval_accuracy']
+            gen_acc_when_retrieved = values[f'level_{level}_generation_accuracy_when_retrieved']
+            
+            # Calculate error rates
+            overall_error_rate = 1 - overall_acc
+            
+            # Retrieval errors: cases where label is NOT in retrieved codes
+            retrieval_error_rate = 1 - retrieval_acc
+            
+            # Generation errors when retrieved: label IS in retrieved but prediction wrong
+            # This is: (retrieval_acc * (1 - gen_acc_when_retrieved))
+            generation_error_rate_when_retrieved = retrieval_acc * (1 - gen_acc_when_retrieved)
+            
+            error_analysis[metric_type][f'level_{level}'] = {
+                'overall_error_rate': overall_error_rate,
+                'retrieval_error_rate': retrieval_error_rate,
+                'generation_error_rate_when_retrieved': generation_error_rate_when_retrieved,
+                'retrieval_error_proportion': retrieval_error_rate / overall_error_rate if overall_error_rate > 0 else 0.0,
+                'generation_error_proportion': generation_error_rate_when_retrieved / overall_error_rate if overall_error_rate > 0 else 0.0
+            }
+    
+    return error_analysis
+
+
+def print_error_analysis(error_analysis: Dict[str, Dict[str, Dict[str, float]]]) -> None:
+    """
+    Print error analysis showing proportion of retrieval vs generation errors
+    
+    Args:
+        error_analysis: Dictionary returned by analyze_error_sources
+    """
+    print("\n" + "=" * 100)
+    print("ERROR SOURCE ANALYSIS")
+    print("=" * 100)
+    
+    for metric_type, values in error_analysis.items():
+        print(f"\n{'─' * 100}")
+        print(f"Metric Type: {metric_type.upper().replace('_', ' ')}")
+        print(f"{'─' * 100}")
+        print(f"{'Level':<8} {'Overall Err':<15} {'Retrieval Err':<18} {'Generation Err':<18} {'% Retrieval':<15} {'% Generation':<15}")
+        print(f"{'-'*8} {'-'*15} {'-'*18} {'-'*18} {'-'*15} {'-'*15}")
+        
+        for level in range(1, 6):
+            level_data = values[f'level_{level}']
+            
+            print(
+                f"{level:<8} "
+                f"{level_data['overall_error_rate']:<15.4f} "
+                f"{level_data['retrieval_error_rate']:<18.4f} "
+                f"{level_data['generation_error_rate_when_retrieved']:<18.4f} "
+                f"{level_data['retrieval_error_proportion']:<15.2%} "
+                f"{level_data['generation_error_proportion']:<15.2%}"
+            )
+    
+    print("\n" + "=" * 100)
+
