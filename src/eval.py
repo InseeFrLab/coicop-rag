@@ -2,9 +2,13 @@
 import os
 os.chdir("..")
 # os.chdir("coicop-rag")
+import re
 import duckdb
 import pandas as pd
 from src.eval.metrics import truncate_code, compute_hierarchical_metrics, calculate_accuracy_at_level, print_metrics_report
+pd.reset_option("display.max_colwidth")
+pd.set_option('display.max_rows', None)
+
 
 con = duckdb.connect(database=":memory:")
 
@@ -12,11 +16,47 @@ s3_path_predictions = "s3://projet-budget-famille/data/rag/predictions_20260106_
 s3_path_retrieved_codes = "s3://projet-budget-famille/data/rag/retrieved_codes_20260106_155655.parquet"
 query_definition = f"SELECT * FROM read_parquet('{s3_path_predictions}')"
 df_eval = con.sql(query_definition).to_df()
-query_definition = f"SELECT * FROM read_parquet('{s3_path_retrieved_codes}')"
-retrieved_codes = con.sql(query_definition).to_df()
+
+retrieved_codes = con.sql(f"SELECT * FROM read_parquet('{s3_path_retrieved_codes}')").to_df()
+
+predictions = df_eval.to_dict('records')
+
+# Preprocess rag records
+cols = [str(i) for i in range(5)]
+retrieved_codes["list_retrieved_codes"] = retrieved_codes[cols].values.tolist()
+retrieved_codes = retrieved_codes.drop(cols, axis=1)
+
+df_eval = df_eval.merge(retrieved_codes, how="left", on="id")
+
+df_eval["in_retrieved"] = False
+for _, row in df_eval.iterrows():
+    row["in_retrieved"] = (row["code"] in row["list_retrieved_codes"])
+
+df_eval["code"] in df_eval["list_retrieved_codes"]
+row = df_eval.loc[2]
+
+df_eval["in_retrieved"] = df_eval.apply(
+    lambda row: row["code"] in row["list_retrieved_codes"],
+    axis=1
+)
+
+records = df_eval.to_dict('records')
 
 
-# %%
+## Filtre des cas à gérer a priori -------------
+
+s3_path_duplicated_annotations = "s3://projet-budget-famille/data/output-annotation-consolidated-2026-01-05/annotations_with_multiple_codes_hors_copain.parquet"
+df_duplicated = con.sql(f"SELECT * FROM read_parquet('{s3_path_duplicated_annotations}')").to_df()
+
+df_product_counts = (
+    df_duplicated["product"]
+    .value_counts(ascending=True)
+    .reset_index()
+    .rename(columns={"index": "product", "product": "count"})
+)
+df_product_counts
+
+df_duplicated[df_duplicated["product"] == "marche"]
 
 pattern_code_pairs = [
     (r"fruits? et l[eé]gumes?", "01.1"),
@@ -25,17 +65,58 @@ pattern_code_pairs = [
     (r"\b(divers\s+)?courses?\b", "98.1"),
     (r"^\s*boulangerie\s*$", "01.1.1.3"),
     (r"^\s*billeterie\s*$", "09.4"),
-    (r"^\s*restaurant\s*$", "11.1.1")
+    (r"^\s*restaurant\s*$", "11.1.1"),
+    (r"^\s*resto$", "11.1.1"),
+    (r"^carte bancaire$", "98.3"),
+    (r"^alimentation?$", "98.1.1"),
+    (r"^alimentaire$", "98.1.1"),
+    (r"^courses?$", "98.1"),
+    (r"^reductions?.*", "98.5"),
+    (r"^remises?.*", "98.5"), # Go reprise
+    (r"^nourriture$", "98.1"), # Go reprise
+    (r"^boissons?$", "98.1"), # Go reprise
+    (r"^prelevement$", "98.4"), # Go reprise
+    (r"^-10 % abonnement*", "98.5"), # Go reprise
+    (r"^divers$", "98.2"), # Go reprise
+    (r"^epicerie$", "98.1.1"), # Go reprise
+    (r"^avantage carte 1028$", "99"), # Go reprise
+    (r"^bon immediat$", "98.5"), # Go reprise
+    (r"^rabais 30 %$", "98.5"), # Go reprise
+    (r"^illisible$", "98.4"), # Go reprise
+    (r"^[^a-zA-Z]*$", "98.4"), # Go reprise
+    (r"^cantine$", "11.1.2.1"), # Go reprise
+    (r"^cb$", "98"), # Go reprise
+    (r"^marche$", "98.1.1"), # Go reprise
 ]
 
-import re
+# patterns = [p for p, _ in pattern_code_pairs]
+# combined_pattern = "|".join(patterns)
 
-# Extraire les patterns regex
-patterns = [p for p, _ in pattern_code_pairs]
 
-# Combiner les patterns en une seule regex
-combined_pattern = "|".join(patterns)
 
+data = [
+    {"product": "fruits et légumes", "code_predict": "00.0"},
+    {"product": "légumes", "code_predict": "00.0"},
+    {"product": "fruits", "code_predict": "00.0"},
+    {"product": "divers courses", "code_predict": "00.0"},
+    {"product": "boulangerie", "code_predict": "00.0"},
+    {"product": "123", "code_predict": "00.0"},
+    {"product": "rabais 30%", "code_predict": "00.0"},
+    {"product": "cantine", "code_predict": "00.0"},
+]
+
+patterns = [(re.compile(pattern, re.IGNORECASE), code) for pattern, code in pattern_code_pairs]
+
+for entry in records:
+    product = entry["product"]
+    entry["coding_tool"] = "rag"
+    for pattern, code in patterns:
+        if pattern.fullmatch(product):
+            entry["coding_tool"] = "regex"
+            entry["code_predict"] = code
+            break  # On arrête dès qu'un pattern correspond
+
+records[1]
 # Retirer les lignes dont 'product' match un des patterns
 df_eval = df_eval[
     ~df_eval["product"].str.contains(
@@ -46,18 +127,7 @@ df_eval = df_eval[
     )
 ]
 
-df_eval["in_retrieved"] = False
-for index, row in df_eval.iterrows():
-    id = row["id"]
-    list_retrieved_codes = (
-      retrieved_codes
-        .loc[retrieved_codes["id"] == id]
-        .drop('id', axis = 1)
-        .values.tolist()[0]
-    )
-    row["in_retrieved"] = (row["code"] in list_retrieved_codes)
 
-id = "a789822e-4c71-42bc-b2a4-7916f62202cf"
 
 df_eval.columns
 df_eval["good_pred"].mean()
