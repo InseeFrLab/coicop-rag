@@ -1,4 +1,7 @@
 # %%
+
+# Environment --------------------------------------
+
 import os
 os.chdir("..")
 # os.chdir("coicop-rag")
@@ -8,7 +11,7 @@ import pandas as pd
 from src.eval.metrics import truncate_code, compute_hierarchical_metrics, calculate_accuracy_at_level, print_metrics_report
 pd.reset_option("display.max_colwidth")
 pd.set_option('display.max_rows', None)
-
+retrieval_size = 5
 
 con = duckdb.connect(database=":memory:")
 
@@ -21,19 +24,14 @@ retrieved_codes = con.sql(f"SELECT * FROM read_parquet('{s3_path_retrieved_codes
 
 predictions = df_eval.to_dict('records')
 
+# Preprocessing --------------------------------------
+
 # Preprocess rag records
-cols = [str(i) for i in range(5)]
+cols = [str(i) for i in range(retrieval_size)]
 retrieved_codes["list_retrieved_codes"] = retrieved_codes[cols].values.tolist()
 retrieved_codes = retrieved_codes.drop(cols, axis=1)
 
 df_eval = df_eval.merge(retrieved_codes, how="left", on="id")
-
-df_eval["in_retrieved"] = False
-for _, row in df_eval.iterrows():
-    row["in_retrieved"] = (row["code"] in row["list_retrieved_codes"])
-
-df_eval["code"] in df_eval["list_retrieved_codes"]
-row = df_eval.loc[2]
 
 df_eval["in_retrieved"] = df_eval.apply(
     lambda row: row["code"] in row["list_retrieved_codes"],
@@ -45,18 +43,18 @@ records = df_eval.to_dict('records')
 
 ## Filtre des cas à gérer a priori -------------
 
-s3_path_duplicated_annotations = "s3://projet-budget-famille/data/output-annotation-consolidated-2026-01-05/annotations_with_multiple_codes_hors_copain.parquet"
-df_duplicated = con.sql(f"SELECT * FROM read_parquet('{s3_path_duplicated_annotations}')").to_df()
+# s3_path_duplicated_annotations = "s3://projet-budget-famille/data/output-annotation-consolidated-2026-01-05/annotations_with_multiple_codes_hors_copain.parquet"
+# df_duplicated = con.sql(f"SELECT * FROM read_parquet('{s3_path_duplicated_annotations}')").to_df()
 
-df_product_counts = (
-    df_duplicated["product"]
-    .value_counts(ascending=True)
-    .reset_index()
-    .rename(columns={"index": "product", "product": "count"})
-)
-df_product_counts
+# df_product_counts = (
+#     df_duplicated["product"]
+#     .value_counts(ascending=True)
+#     .reset_index()
+#     .rename(columns={"index": "product", "product": "count"})
+# )
+# df_product_counts
 
-df_duplicated[df_duplicated["product"] == "marche"]
+# df_duplicated[df_duplicated["product"] == "marche"]
 
 pattern_code_pairs = [
     (r"fruits? et l[eé]gumes?", "01.1"),
@@ -92,40 +90,164 @@ pattern_code_pairs = [
 # patterns = [p for p, _ in pattern_code_pairs]
 # combined_pattern = "|".join(patterns)
 
-
-
-data = [
-    {"product": "fruits et légumes", "code_predict": "00.0"},
-    {"product": "légumes", "code_predict": "00.0"},
-    {"product": "fruits", "code_predict": "00.0"},
-    {"product": "divers courses", "code_predict": "00.0"},
-    {"product": "boulangerie", "code_predict": "00.0"},
-    {"product": "123", "code_predict": "00.0"},
-    {"product": "rabais 30%", "code_predict": "00.0"},
-    {"product": "cantine", "code_predict": "00.0"},
-]
-
-patterns = [(re.compile(pattern, re.IGNORECASE), code) for pattern, code in pattern_code_pairs]
+pattern_code_pairs = [(re.compile(pattern, re.IGNORECASE), code) for pattern, code in pattern_code_pairs]
 
 for entry in records:
     product = entry["product"]
     entry["coding_tool"] = "rag"
-    for pattern, code in patterns:
+    for pattern, code in pattern_code_pairs:
         if pattern.fullmatch(product):
             entry["coding_tool"] = "regex"
             entry["code_predict"] = code
             break  # On arrête dès qu'un pattern correspond
 
-records[1]
-# Retirer les lignes dont 'product' match un des patterns
-df_eval = df_eval[
-    ~df_eval["product"].str.contains(
-        combined_pattern,
-        regex=True,
-        case=False,
-        na=False
+
+# Eval --------------------------------------
+
+records_rag = [record for record in records if record["coding_tool"] == "rag"]
+records_regex = [record for record in records if record["coding_tool"] == "regex"]
+
+len(records_rag)
+len(records_regex)
+
+
+
+# dev retrieval eval 
+
+from typing import Dict, List, Optional, Tuple
+
+
+def check_label_in_retrieved(
+    label_code: str,
+    retrieved_codes: List[str],
+    level: int
+) -> bool:
+    """
+    Check if the label code is present in the retrieved codes list at a given level
+    
+    Args:
+        label_code: Ground truth code
+        retrieved_codes: List of retrieved codes from RAG
+        level: Hierarchical level (1-5) to check
+    
+    Returns:
+        True if label is in retrieved codes at this level, False otherwise
+    """
+    if label_code is None or retrieved_codes is None:
+        return False
+    
+    # Truncate label to specified level
+    label_truncated = truncate_code(label_code, level)
+    if label_truncated is None:
+        return False
+    
+    # Check if any retrieved code matches at this level
+    for retrieved_code in retrieved_codes:
+        retrieved_truncated = truncate_code(retrieved_code, level)
+        if retrieved_truncated == label_truncated:
+            return True
+    
+    return False
+
+
+
+def calculate_accuracy_at_level(
+    records: List[Dict],
+    predicted_col: str,
+    label_col: str,
+    level: int,
+    retrieved_col: str = 'list_retrieved_codes'
+) -> Tuple[float, List[bool], float, float, List[bool]]:
+    """
+    Calculate accuracy at a specific hierarchical level with retrieval analysis
+    
+    Args:
+        records: List of dictionaries with predictions and labels
+        predicted_col: Key name for predicted code
+        label_col: Key name for labeled code
+        level: Hierarchical level (1-5)
+        retrieved_col: Key name for list of retrieved codes
+    
+    Returns:
+        Tuple containing:
+        - overall_accuracy: Overall accuracy (0.0 to 1.0)
+        - result_list: List of bool indicating if each prediction is correct
+        - retrieval_accuracy: Proportion of cases where label is in retrieved codes
+        - generation_accuracy_when_retrieved: Accuracy when label is in retrieved codes
+        - label_in_retrieved_list: List of bool indicating if label is in retrieved codes
+    """
+    correct = 0
+    total = 0
+    result_list = []
+    label_in_retrieved_list = []
+    
+    # For generation accuracy when retrieved
+    correct_when_retrieved = 0
+    total_when_retrieved = 0
+    
+    for record in records:
+        pred_code = record.get(predicted_col)
+        label_code = record.get(label_col)
+        retrieved_codes = record.get(retrieved_col, [])
+        
+        # Truncate codes to specified level
+        pred_truncated = truncate_code(pred_code, level)
+        label_truncated = truncate_code(label_code, level)
+        
+        # Skip if either truncation failed
+        # if pred_truncated is None or label_truncated is None:
+        #     result_list.append(False)
+        #     label_in_retrieved_list.append(False)
+        #     continue
+        
+        # Check if prediction is correct
+        is_correct = (pred_truncated == label_truncated)
+        result_list.append(is_correct)
+        
+        # Check if label is in retrieved codes
+        label_is_retrieved = check_label_in_retrieved(
+            label_code, 
+            retrieved_codes, 
+            level
+        )
+        label_in_retrieved_list.append(label_is_retrieved)
+        
+        # Update overall accuracy counters
+        total += 1
+        if is_correct:
+            correct += 1
+        
+        # Update generation accuracy when retrieved counters
+        if label_is_retrieved:
+            total_when_retrieved += 1
+            if is_correct:
+                correct_when_retrieved += 1
+    
+    # Calculate accuracies
+    overall_accuracy = correct / total if total > 0 else 0.0
+    retrieval_accuracy = sum(label_in_retrieved_list) / len(label_in_retrieved_list) if len(label_in_retrieved_list) > 0 else 0.0
+    generation_accuracy_when_retrieved = correct_when_retrieved / total_when_retrieved if total_when_retrieved > 0 else 0.0
+    
+    return (
+        overall_accuracy,
+        result_list,
+        retrieval_accuracy,
+        generation_accuracy_when_retrieved,
+        label_in_retrieved_list
     )
-]
+
+
+
+calculate_accuracy_at_level(
+    records_test,
+    "coicop_pred",
+    "code",
+    4,
+    "list_retrieved_codes"
+)
+
+
+metrics = compute_hierarchical_metrics(records_rag)
 
 
 

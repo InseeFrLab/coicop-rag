@@ -1,5 +1,4 @@
-from typing import Dict, List, Optional
-
+from typing import Dict, List, Optional, Tuple
 
 def truncate_code(code: str, level: int) -> Optional[str]:
     """
@@ -27,31 +26,78 @@ def truncate_code(code: str, level: int) -> Optional[str]:
     return '.'.join(parts[:level])
 
 
+def check_label_in_retrieved(
+    label_code: str,
+    retrieved_codes: List[str],
+    level: int
+) -> bool:
+    """
+    Check if the label code is present in the retrieved codes list at a given level
+    
+    Args:
+        label_code: Ground truth code
+        retrieved_codes: List of retrieved codes from RAG
+        level: Hierarchical level (1-5) to check
+    
+    Returns:
+        True if label is in retrieved codes at this level, False otherwise
+    """
+    if label_code is None or retrieved_codes is None:
+        return False
+    
+    # Truncate label to specified level
+    label_truncated = truncate_code(label_code, level)
+    if label_truncated is None:
+        return False
+    
+    # Check if any retrieved code matches at this level
+    for retrieved_code in retrieved_codes:
+        retrieved_truncated = truncate_code(retrieved_code, level)
+        if retrieved_truncated == label_truncated:
+            return True
+    
+    return False
+
+
+
 def calculate_accuracy_at_level(
     records: List[Dict],
     predicted_col: str,
     label_col: str,
-    level: int
-) -> float:
+    level: int,
+    retrieved_col: str = 'list_retrieved_codes'
+) -> Tuple[float, List[bool], float, float, List[bool]]:
     """
-    Calculate accuracy at a specific hierarchical level
+    Calculate accuracy at a specific hierarchical level with retrieval analysis
     
     Args:
         records: List of dictionaries with predictions and labels
         predicted_col: Key name for predicted code
         label_col: Key name for labeled code
         level: Hierarchical level (1-5)
+        retrieved_col: Key name for list of retrieved codes
     
     Returns:
-        Accuracy score (0.0 to 1.0)
+        Tuple containing:
+        - overall_accuracy: Overall accuracy (0.0 to 1.0)
+        - result_list: List of bool indicating if each prediction is correct
+        - retrieval_accuracy: Proportion of cases where label is in retrieved codes
+        - generation_accuracy_when_retrieved: Accuracy when label is in retrieved codes
+        - label_in_retrieved_list: List of bool indicating if label is in retrieved codes
     """
     correct = 0
     total = 0
     result_list = []
+    label_in_retrieved_list = []
+    
+    # For generation accuracy when retrieved
+    correct_when_retrieved = 0
+    total_when_retrieved = 0
     
     for record in records:
         pred_code = record.get(predicted_col)
         label_code = record.get(label_col)
+        retrieved_codes = record.get(retrieved_col, [])
         
         # Truncate codes to specified level
         pred_truncated = truncate_code(pred_code, level)
@@ -59,20 +105,45 @@ def calculate_accuracy_at_level(
         
         # Skip if either truncation failed
         # if pred_truncated is None or label_truncated is None:
+        #     result_list.append(False)
+        #     label_in_retrieved_list.append(False)
         #     continue
         
-        # Compare truncated codes
-        result = (pred_truncated == label_truncated)
-        result_list.append(result)
+        # Check if prediction is correct
+        is_correct = (pred_truncated == label_truncated)
+        result_list.append(is_correct)
+        
+        # Check if label is in retrieved codes
+        label_is_retrieved = check_label_in_retrieved(
+            label_code, 
+            retrieved_codes, 
+            level
+        )
+        label_in_retrieved_list.append(label_is_retrieved)
+        
+        # Update overall accuracy counters
         total += 1
-        if result:
+        if is_correct:
             correct += 1
+        
+        # Update generation accuracy when retrieved counters
+        if label_is_retrieved:
+            total_when_retrieved += 1
+            if is_correct:
+                correct_when_retrieved += 1
     
-    # Calculate accuracy
-    if total == 0:
-        return 0.0
+    # Calculate accuracies
+    overall_accuracy = correct / total if total > 0 else 0.0
+    retrieval_accuracy = sum(label_in_retrieved_list) / len(label_in_retrieved_list) if len(label_in_retrieved_list) > 0 else 0.0
+    generation_accuracy_when_retrieved = correct_when_retrieved / total_when_retrieved if total_when_retrieved > 0 else 0.0
     
-    return correct / total, result_list
+    return (
+        overall_accuracy,
+        result_list,
+        retrieval_accuracy,
+        generation_accuracy_when_retrieved,
+        label_in_retrieved_list
+    )
 
 
 def filter_records(
@@ -113,7 +184,7 @@ def filter_records(
 
 
 def compute_hierarchical_metrics(
-    df,
+    records: List[Dict],
     product_col: str = "product",
     predicted_col: str = "coicop_pred",
     label_col: str = "code",
@@ -149,8 +220,6 @@ def compute_hierarchical_metrics(
             'parsed_and_codable': {...}
         }
     """
-    # Convert DataFrame to list of dictionaries
-    records = df.to_dict('records')
     
     # Initialize results dictionary
     results = {
