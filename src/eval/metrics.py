@@ -150,7 +150,9 @@ def filter_records(
     records: List[Dict],
     parsed_col: str,
     codable_col: str,
-    filter_type: str
+    filter_type: str,
+    confidence_col: str = "confidence",
+    threshold: float = 0.7,
 ) -> List[Dict]:
     """
     Filter records based on filter type
@@ -178,6 +180,11 @@ def filter_records(
             r for r in records 
             if r.get(parsed_col) == True and r.get(codable_col) == True
         ]
+    elif filter_type == 'threshold':
+        return [
+            r for r in records 
+            if r.get(parsed_col) == True and r.get(codable_col) == True and r.get(confidence_col) >= threshold 
+        ]
     
     else:
         raise ValueError(f"Unknown filter_type: {filter_type}")
@@ -191,7 +198,8 @@ def compute_hierarchical_metrics(
     confidence_col: str = "confidence",
     codable_col: str = "codable",
     parsed_col: str = "parsed",
-    retrieved_col: str = "list_retrieved_codes"
+    retrieved_col: str = "list_retrieved_codes",
+    threshold: float = 0.7,
 ) -> Dict[str, Dict]:
     """
     Compute hierarchical accuracy metrics with retrieval analysis
@@ -226,11 +234,12 @@ def compute_hierarchical_metrics(
         'all_raw': {},
         'all_parsed': {},
         'codable_only': {},
-        'parsed_and_codable': {}
+        'parsed_and_codable': {},
+        'threshold': {},
     }
     
     # Define filter types
-    filter_types = ['all_raw', 'all_parsed', 'codable_only', 'parsed_and_codable']
+    filter_types = ['all_raw', 'all_parsed', 'codable_only', 'parsed_and_codable', 'threshold']
     
     # Calculate metrics for each filter type
     for filter_type in filter_types:
@@ -239,7 +248,9 @@ def compute_hierarchical_metrics(
             records, 
             parsed_col, 
             codable_col, 
-            filter_type
+            filter_type,
+            confidence_col,
+            threshold
         )
         
         # Store number of samples

@@ -129,7 +129,10 @@ calculate_accuracy_at_level(
 )
 
 
-metrics = compute_hierarchical_metrics(records_rag)
+metrics = compute_hierarchical_metrics(
+  records=records_rag,
+  threshold=0.7
+)
 
 print_metrics_report(metrics)
 
