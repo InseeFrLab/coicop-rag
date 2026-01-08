@@ -93,7 +93,9 @@ pattern_code_pairs = [
     (r"^cantine$", "11.1.2.1"), # Go reprise
     (r"^cb$", "98"), # Go reprise
     (r"^marche$", "98.1.1"), # Go reprise
+    (r"^surgeles?$", "98.1.1"), # Go reprise
     (r"^retrait$", "99.2"), # Go reprise
+    (r"^boucher$", "01.1.2.2"), # Go reprise
 ]
 
 # patterns = [p for p, _ in pattern_code_pairs]
@@ -195,7 +197,7 @@ pd.DataFrame(errors_list)[
   ["product", "enseigne", "code", "coicop_pred","confidence", "in_retrieved", "list_retrieved_codes"]
 ].sample(5)
 
-
+[m for m in errors_list if m["product"]=="cadre"]
 
 
 # ----------------------------------------------
