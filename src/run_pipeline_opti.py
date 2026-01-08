@@ -1,5 +1,5 @@
 import os
-# os.chdir("coicop-rag")
+# os.chdir("coicop-rag/src")
 import yaml
 import datetime
 import uuid
@@ -22,7 +22,8 @@ import time
 with open("config.yaml", "r") as f:
     config = yaml.safe_load(f)
 
-sample_size = config["annotations"]["sample_size"]
+# sample_size = config["annotations"]["sample_size"]
+sample_size = 30
 
 # Database
 con = duckdb.connect(database=":memory:")
@@ -73,6 +74,9 @@ def generate_embeddings_batch(
     
     # Process each batch
     iterator = tqdm(batches, desc="Generating embeddings") if show_progress else batches
+
+    # for batch in iterator:
+    #     print(batch)
     
     for batch in iterator:
         try:
@@ -264,13 +268,28 @@ def main_optimized():
     step_start = time.time()
     
     product_texts = [p['product'] for p in searched_products]
+    len(product_texts)
     
     search_embeddings = generate_embeddings_batch(
         texts=product_texts,
         model=config["embedding"]["model_name"],
-        batch_size=config.get("performance", {}).get("embedding_batch_size", 100)
+        batch_size=8
+        # batch_size=config.get("performance", {}).get("embedding_batch_size", 100)
     )
     
+    client_llm = OpenAI(
+        api_key=os.environ["OLLAMA_API_KEY"],
+        base_url=os.environ["OLLAMA_URL"]
+    )
+    texts = ['thermometre aquarium', 'billeterie', '4 baguettes', 'diverses courses']
+    response = client_llm.embeddings.create(
+        model='qwen3-embedding:8b',
+        input=texts
+    )
+    len(response.data) # = 1
+
+
+
     step_time = time.time() - step_start
     print(f"✓ Generated {len(search_embeddings)} embeddings in {step_time:.2f}s")
     print(f"  Embedding dimension: {len(search_embeddings[0])}")
