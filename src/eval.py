@@ -20,17 +20,16 @@ from src.eval.metrics import (
 pd.reset_option("display.max_colwidth")
 pd.set_option('display.max_rows', None)
 retrieval_size = 5
+threshold_confidence = 0.7
 
 con = duckdb.connect(database=":memory:")
 
-s3_path_predictions = "s3://projet-budget-famille/data/rag/predictions_20260106_155655.parquet"
-s3_path_retrieved_codes = "s3://projet-budget-famille/data/rag/retrieved_codes_20260106_155655.parquet"
+s3_path_predictions = "s3://projet-budget-famille/data/rag/predictions_20260107_180045.parquet"
+s3_path_retrieved_codes = "s3://projet-budget-famille/data/rag/retrieved_codes_20260107_180045.parquet"
 query_definition = f"SELECT * FROM read_parquet('{s3_path_predictions}')"
 df_eval = con.sql(query_definition).to_df()
 
 retrieved_codes = con.sql(f"SELECT * FROM read_parquet('{s3_path_retrieved_codes}')").to_df()
-
-predictions = df_eval.to_dict('records')
 
 # Preprocessing --------------------------------------
 
@@ -48,7 +47,7 @@ df_eval["in_retrieved"] = df_eval.apply(
 
 records = df_eval.to_dict('records')
 
-
+len(records)
 ## Filtre des cas à gérer a priori -------------
 
 # s3_path_duplicated_annotations = "s3://projet-budget-famille/data/output-annotation-consolidated-2026-01-05/annotations_with_multiple_codes_hors_copain.parquet"
@@ -76,6 +75,7 @@ pattern_code_pairs = [
     (r"^carte bancaire$", "98.3"),
     (r"^alimentation?$", "98.1.1"),
     (r"^alimentaire$", "98.1.1"),
+    (r"^courses alimentaires$", "98.1.1"),
     (r"^courses?$", "98.1"),
     (r"^reductions?.*", "98.5"),
     (r"^remises?.*", "98.5"), # Go reprise
@@ -93,6 +93,7 @@ pattern_code_pairs = [
     (r"^cantine$", "11.1.2.1"), # Go reprise
     (r"^cb$", "98"), # Go reprise
     (r"^marche$", "98.1.1"), # Go reprise
+    (r"^retrait$", "99.2"), # Go reprise
 ]
 
 # patterns = [p for p, _ in pattern_code_pairs]
@@ -109,6 +110,7 @@ for entry in records:
             entry["code_predict"] = code
             break  # On arrête dès qu'un pattern correspond
 
+len(records)
 
 # Eval --------------------------------------
 
@@ -119,19 +121,9 @@ len(records_rag)
 len(records_regex)
 
 
-
-calculate_accuracy_at_level(
-    records_rag,
-    "coicop_pred",
-    "code",
-    4,
-    "list_retrieved_codes"
-)
-
-
 metrics = compute_hierarchical_metrics(
   records=records_rag,
-  threshold=0.7
+  threshold=threshold_confidence
 )
 
 print_metrics_report(metrics)
@@ -147,7 +139,67 @@ print("METRICS SUMMARY TABLE")
 print("=" * 100)
 print(metrics_df.to_string(index=False))
 
+
+
 # ----------------------------------------------
+# Error analyses at level 4  
+
+(
+    overall_accuracy,
+    result_list,
+    retrieval_accuracy,
+    generation_accuracy_when_retrieved,
+    label_in_retrieved_list
+) = calculate_accuracy_at_level(
+    records=records_rag,
+    predicted_col="coicop_pred",
+    label_col="code",
+    level=4,
+    retrieved_col='list_retrieved_codes'
+)
+
+errors_list = [x for x, m in zip(records_rag, result_list) if not m]
+print(f"Number of errors : {len(errors_list)} (on a total of {len(records_rag)})")
+
+errors_list_high_confidence = [x for x in errors_list if x["confidence"] > threshold_confidence]
+print(f"""
+  Number of errors despite high confidence (>{threshold_confidence}) : {len(errors_list_high_confidence)})
+  (on a total of {len(errors_list)} errors)
+""")
+
+errors_special_codes = [x for x in errors_list if (x["code"][:2] in ("98","99"))]
+n_errors = len(errors_list)
+n_errors_special_codes = len(errors_special_codes)
+n_errors_special_codes/n_errors
+print(f"""
+  Number of errors dur to special BDF codes (98, 99) : {n_errors_special_codes})
+  (on a total of {len(errors_list)} errors ==> proprtion = {round(100 * n_errors_special_codes/n_errors, 1)}%)
+""")
+
+errors_normal_codes = [x for x in errors_list if (x["code"][:2] not in ("98", "99"))]
+errors_normal_codes_too_precise = [
+  x for x in errors_normal_codes
+  if (x["coicop_pred"] and x["coicop_pred"].startswith(x["code"]))
+]
+n_errors_normal_codes = len(errors_normal_codes)
+n_errors_normal_codes_too_precise = len(errors_normal_codes_too_precise)
+
+print(f"""
+  Number of errors dur to overprecise predictions : {n_errors_normal_codes_too_precise} among normal codes (total of {n_errors_normal_codes}))
+  proprtion = {round(100 * n_errors_normal_codes_too_precise/n_errors_normal_codes, 1)}%)
+""")
+
+
+
+pd.DataFrame(errors_list)[
+  ["product", "enseigne", "code", "coicop_pred","confidence", "in_retrieved", "list_retrieved_codes"]
+].sample(5)
+
+
+
+
+# ----------------------------------------------
+
 df_eval.columns
 df_eval["good_pred"].mean()
 df_eval["parsed"].value_counts()
@@ -218,23 +270,4 @@ pd.reset_option("display.max_colwidth")
 str(df_eval.loc[df_eval["product"] == "billets avion", "reasons"].to_string(index=False))
 
 
-# Compute metrics
-metrics = compute_hierarchical_metrics(df_eval)
-metrics["all_raw"]["level_5"]
-
-# Print formatted report
-print_metrics_report(metrics)
-
-# Export to DataFrame for further analysis
-metrics_df = export_metrics_to_dataframe(metrics)
-print("\nMetrics as DataFrame:")
-print(metrics_df)
-
-# Access specific metrics programmatically
-print("\n" + "="*80)
-print("SPECIFIC METRIC ACCESS EXAMPLES")
-print("="*80)
-print(f"All parsed - Level 3 accuracy: {metrics['all_parsed']['level_3']:.2%}")
-print(f"Codable only - Level 5 accuracy: {metrics['codable_only']['level_5']:.2%}")
-print(f"Parsed & codable - Level 1 accuracy: {metrics['parsed_and_codable']['level_1']:.2%}")
 # %%
