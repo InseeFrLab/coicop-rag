@@ -237,3 +237,6 @@ str(df_eval.loc[df_eval["product"] == "billets avion", "reasons"].to_string(inde
 
 
 # %%
+import mlflow
+mlflow.set_tracking_uri("https://projet-budget-famille-mlflow.user.lab.sspcloud.fr/")
+mlflow.search_experiments()

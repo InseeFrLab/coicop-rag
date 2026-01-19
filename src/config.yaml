@@ -31,3 +31,6 @@ predictions:
 eval:
   threshold_confidence: 0.7
   rules_path: src/eval/rules.yaml
+
+mlflow:
+  experiment_name: test
