@@ -102,6 +102,11 @@ print(metrics_df.to_string(index=False))
 
 
 
+
+
+
+flatten_metrics(metrics)
+
 # ----------------------------------------------
 # Error analyses at level 4  
 

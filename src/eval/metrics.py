@@ -414,3 +414,25 @@ def print_error_analysis(error_analysis: Dict[str, Dict[str, Dict[str, float]]])
     
     print("\n" + "=" * 100)
 
+
+def flatten_metrics(metrics_hierarchical: dict) -> dict:
+    """
+    Transform a hierarchical metrics dictionary into a flat dictionary
+    compatible with mlflow.log_metrics, using slashes for hierarchy.
+    
+    Example of output key: "all_raw/level_1/overall_accuracy"
+    """
+    flattened = {}
+    
+    for metric_type, values in metrics_hierarchical.items():
+        # Add n_samples as a global metric for the type
+        if 'n_samples' in values:
+            flattened[f"{metric_type}/n_samples"] = values['n_samples']
+        
+        for key, val in values.items():
+            if key == 'n_samples':
+                continue
+            # Every other key becomes <metric_type>/<key>
+            flattened[f"{metric_type}/{key}"] = val
+    
+    return flattened
