@@ -314,6 +314,45 @@ def print_metrics_report(metrics: Dict[str, Dict[str, float]]) -> None:
     
     print("\n" + "=" * 100)
 
+def write_metrics_report(
+    metrics: Dict[str, Dict[str, float]], 
+    output_path: str
+) -> None:
+    """
+    Write a formatted report of the metrics including retrieval analysis to a text file
+    
+    Args:
+        metrics: Dictionary returned by compute_hierarchical_metrics
+        output_path: Path to the output .txt file
+    """
+    with open(output_path, 'w') as f:
+        f.write("=" * 100 + "\n")
+        f.write("HIERARCHICAL CLASSIFICATION METRICS WITH RETRIEVAL ANALYSIS\n")
+        f.write("=" * 100 + "\n")
+        
+        for metric_type, values in metrics.items():
+            f.write(f"\n{'─' * 100}\n")
+            f.write(f"Metric Type: {metric_type.upper().replace('_', ' ')}\n")
+            f.write(f"{'─' * 100}\n")
+            f.write(f"Number of samples: {values['n_samples']}\n")
+            f.write("\n")
+            f.write(f"{'Level':<8} {'Overall Acc':<15} {'Retrieval Acc':<18} {'Gen Acc (Retrieved)':<20}\n")
+            f.write(f"{'-'*8} {'-'*15} {'-'*18} {'-'*20}\n")
+            
+            for level in range(1, 6):
+                overall_acc = values[f'level_{level}']
+                retrieval_acc = values[f'level_{level}_retrieval_accuracy']
+                gen_acc = values[f'level_{level}_generation_accuracy_when_retrieved']
+                
+                f.write(
+                    f"{level:<8} "
+                    f"{overall_acc:<15.4f} "
+                    f"{retrieval_acc:<18.4f} "
+                    f"{gen_acc:<20.4f}\n"
+                )
+        
+        f.write("\n" + "=" * 100 + "\n")
+
 
 def export_metrics_to_list(metrics: Dict[str, Dict[str, float]]) -> List[Dict]:
     """
@@ -413,6 +452,30 @@ def print_error_analysis(error_analysis: Dict[str, Dict[str, Dict[str, float]]])
             )
     
     print("\n" + "=" * 100)
+
+
+import mlflow
+import tempfile
+import contextlib
+from typing import Dict
+
+def save_metrics_report_as_artifact(metrics: Dict[str, Dict[str, float]], output_path: str = "report.txt"):
+    """
+    Call print_metrics_report, capture its output, and save it as an MLflow artifact.
+    """
+    with tempfile.NamedTemporaryFile("w", delete=False) as tmp_file:
+        filename = tmp_file.name
+        
+        # Redirect stdout to the temporary file while calling print_metrics_report
+        with open(output_path, "w") as f:
+            with contextlib.redirect_stdout(f):
+                print_metrics_report(metrics)
+    
+    # Log the temporary file as an MLflow artifact
+    # mlflow.log_artifact(filename, artifact_path="reports")
+    # print(f"Metrics report logged as MLflow artifact: {filename}")
+    return output_path
+
 
 
 def flatten_metrics(metrics_hierarchical: dict) -> dict:

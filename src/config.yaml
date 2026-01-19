@@ -8,7 +8,7 @@ embedding:
   model_len: 4096
 
 retrieval:
-  size: 5
+  size: 10
 
 llm:
   prompt_name: prompt-multi-level
@@ -22,7 +22,7 @@ coicop:
 
 annotations:
   s3_path: "s3://projet-budget-famille/data/output-annotation-consolidated-2026-01-05/raw.parquet"
-  sample_size: 10
+  sample_size: 1000
 
 predictions:
   s3_path: "s3://projet-budget-famille/data/rag/predictions_{timestamp}.parquet"
@@ -33,4 +33,4 @@ eval:
   rules_path: src/eval/rules.yaml
 
 mlflow:
-  experiment_name: test
+  experiment_name: rag-coicop

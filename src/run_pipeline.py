@@ -11,14 +11,14 @@ from openai import OpenAI
 from langfuse import Langfuse
 import mlflow
 from data.parsing import extract_json_from_response
-from src.utils import (
+from utils import (
     merge_eval_and_retreived, 
     apply_rules
 )
-from src.eval.metrics import (
+from eval.metrics import (
     compute_hierarchical_metrics,
     flatten_metrics,
-    print_metrics_report
+    write_metrics_report,
 )
 
 # Logging configuration
@@ -39,6 +39,7 @@ def main():
     
     # Load config
     logger.info("Loading configuration...")
+    # with open("config.yaml", "r") as f:
     with open("src/config.yaml", "r") as f:
         config = yaml.safe_load(f)
     logger.info(f"Configuration loaded: {config['llm']['model_name']}")
@@ -99,6 +100,7 @@ def main():
         
         # Import annotations
         logger.info("Loading annotations...")
+        mlflow.log_param("input_data_path", config['annotations']['s3_path'])
         query_definition = f"SELECT * FROM read_parquet('{config['annotations']['s3_path']}')"
         annotations = con.sql(query_definition).to_df()
         logger.info(f"Annotations loaded: {len(annotations)} rows")
@@ -241,11 +243,7 @@ def main():
         df_retrieved_codes.columns = df_retrieved_codes.columns.astype(str)
         df_retrieved_codes["id"] = df_eval["id"]
         
-        # Basic accuracy
-        accuracy = df_eval["good_pred"].mean()
-        logger.info(f"Overall accuracy: {accuracy:.4f}")
-        mlflow.log_metric("accuracy", accuracy)
-        
+       
         # Export predictions
         logger.info("="*80)
         logger.info("STEP 6: Exporting predictions")
@@ -283,6 +281,10 @@ def main():
             retrieval_size=config["retrieval"]["size"],
         )
         
+        # records = apply_rules(
+        #     records=records,
+        #     path_rules='eval/rules.yaml'
+        # )
         records = apply_rules(
             records=records,
             path_rules=config["eval"]["rules_path"]
@@ -314,8 +316,12 @@ def main():
         logger.info("="*80)
         logger.info("METRICS REPORT")
         logger.info("="*80)
-        print_metrics_report(metrics)
-        
+        #print_metrics_report(metrics)
+        # print_metrics_report(metrics)
+        # report_path = save_metrics_report_as_artifact(metrics, output_path="reports.txt")
+        write_metrics_report(metrics, "report.txt")
+        mlflow.log_artifact("report.txt", artifact_path="reports")
+
         # Log config as artifact
         mlflow.log_dict(config, "config.yaml")
         
