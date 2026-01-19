@@ -19,8 +19,14 @@ from src.eval.metrics import (
 )
 pd.reset_option("display.max_colwidth")
 pd.set_option('display.max_rows', None)
-retrieval_size = 5
-threshold_confidence = 0.7
+
+import yaml
+with open("src/config.yaml", "r") as f:
+    config = yaml.safe_load(f)
+
+threshold_confidence = config["eval"]["threshold_confidence"]
+retrieval_size = config["retrieval"]["size"]
+
 
 con = duckdb.connect(database=":memory:")
 
@@ -34,18 +40,13 @@ retrieved_codes = con.sql(f"SELECT * FROM read_parquet('{s3_path_retrieved_codes
 # Preprocessing --------------------------------------
 
 # Preprocess rag records
-cols = [str(i) for i in range(retrieval_size)]
-retrieved_codes["list_retrieved_codes"] = retrieved_codes[cols].values.tolist()
-retrieved_codes = retrieved_codes.drop(cols, axis=1)
 
-df_eval = df_eval.merge(retrieved_codes, how="left", on="id")
-
-df_eval["in_retrieved"] = df_eval.apply(
-    lambda row: row["code"] in row["list_retrieved_codes"],
-    axis=1
+from src.utils import merge_eval_and_retreived
+records = merge_eval_and_retreived(
+    df_eval=df_eval,
+    retrieved_codes=retrieved_codes,
+    retrieval_size=retrieval_size,
 )
-
-records = df_eval.to_dict('records')
 
 len(records)
 ## Filtre des cas à gérer a priori -------------
@@ -63,56 +64,14 @@ len(records)
 
 # df_duplicated[df_duplicated["product"] == "marche"]
 
-pattern_code_pairs = [
-    (r"fruits? et l[eé]gumes?", "01.1"),
-    (r"^l[eéèêë]gum[eéèêë]s?$", "01.1.7"),
-    (r"^fruits?$", "01.1.6"),
-    (r"\b(divers\s+)?courses?\b", "98.1"),
-    (r"^\s*boulangerie\s*$", "01.1.1.3"),
-    (r"^\s*billeterie\s*$", "09.4"),
-    (r"^\s*restaurant\s*$", "11.1.1"),
-    (r"^\s*resto$", "11.1.1"),
-    (r"^carte bancaire$", "98.3"),
-    (r"^alimentation?$", "98.1.1"),
-    (r"^alimentaire$", "98.1.1"),
-    (r"^courses alimentaires$", "98.1.1"),
-    (r"^courses?$", "98.1"),
-    (r"^reductions?.*", "98.5"),
-    (r"^remises?.*", "98.5"), # Go reprise
-    (r"^nourriture$", "98.1"), # Go reprise
-    (r"^boissons?$", "98.1"), # Go reprise
-    (r"^prelevement$", "98.4"), # Go reprise
-    (r"^-10 % abonnement*", "98.5"), # Go reprise
-    (r"^divers$", "98.2"), # Go reprise
-    (r"^epicerie$", "98.1.1"), # Go reprise
-    (r"^avantage carte 1028$", "99"), # Go reprise
-    (r"^bon immediat$", "98.5"), # Go reprise
-    (r"^rabais 30 %$", "98.5"), # Go reprise
-    (r"^illisible$", "98.4"), # Go reprise
-    (r"^[^a-zA-Z]*$", "98.4"), # Go reprise
-    (r"^cantine$", "11.1.2.1"), # Go reprise
-    (r"^cb$", "98"), # Go reprise
-    (r"^marche$", "98.1.1"), # Go reprise
-    (r"^surgeles?$", "98.1.1"), # Go reprise
-    (r"^retrait$", "99.2"), # Go reprise
-    (r"^boucher$", "01.1.2.2"), # Go reprise
-]
 
-# patterns = [p for p, _ in pattern_code_pairs]
-# combined_pattern = "|".join(patterns)
 
-pattern_code_pairs = [(re.compile(pattern, re.IGNORECASE), code) for pattern, code in pattern_code_pairs]
+from src.utils import apply_rules
 
-for entry in records:
-    product = entry["product"]
-    entry["coding_tool"] = "rag"
-    for pattern, code in pattern_code_pairs:
-        if pattern.fullmatch(product):
-            entry["coding_tool"] = "regex"
-            entry["code_predict"] = code
-            break  # On arrête dès qu'un pattern correspond
-
-len(records)
+records = apply_rules(
+    records=records,
+    path_rules=config["eval"]["rules_path"]
+)
 
 # Eval --------------------------------------
 
@@ -174,7 +133,7 @@ n_errors = len(errors_list)
 n_errors_special_codes = len(errors_special_codes)
 n_errors_special_codes/n_errors
 print(f"""
-  Number of errors dur to special BDF codes (98, 99) : {n_errors_special_codes})
+  Number of errors due to special BDF codes (98, 99) : {n_errors_special_codes})
   (on a total of {len(errors_list)} errors ==> proprtion = {round(100 * n_errors_special_codes/n_errors, 1)}%)
 """)
 
@@ -187,8 +146,8 @@ n_errors_normal_codes = len(errors_normal_codes)
 n_errors_normal_codes_too_precise = len(errors_normal_codes_too_precise)
 
 print(f"""
-  Number of errors dur to overprecise predictions : {n_errors_normal_codes_too_precise} among normal codes (total of {n_errors_normal_codes}))
-  proprtion = {round(100 * n_errors_normal_codes_too_precise/n_errors_normal_codes, 1)}%)
+  Number of errors due to overprecise predictions : {n_errors_normal_codes_too_precise} among normal codes (total of {n_errors_normal_codes}))
+  proportion = {round(100 * n_errors_normal_codes_too_precise/n_errors_normal_codes, 1)}%)
 """)
 
 

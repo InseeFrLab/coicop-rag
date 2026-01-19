@@ -11,6 +11,8 @@ retrieval:
   size: 5
 
 llm:
+  prompt_name: prompt-multi-level
+  prompt_version: latest
   model_name: gpt-oss:20b
   temperature: 0.1
   max_tokens: 256
@@ -25,3 +27,7 @@ annotations:
 predictions:
   s3_path: "s3://projet-budget-famille/data/rag/predictions_{timestamp}.parquet"
   s3_path_retrieved_codes: "s3://projet-budget-famille/data/rag/retrieved_codes_{timestamp}.parquet"
+
+eval:
+  threshold_confidence: 0.7
+  rules_path: src/eval/rules.yaml
