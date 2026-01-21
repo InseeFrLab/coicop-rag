@@ -1,6 +1,6 @@
 # config.yaml
 qdrant:
-  collection_name: "coicop_test"
+  collection_name: "coicop_test_lg"
   upload_batch_size: 56
 
 embedding:
@@ -11,7 +11,7 @@ retrieval:
   size: 10
 
 llm:
-  prompt_name: prompt-multi-level
+  prompt_name: prompt-multi-level-lg
   prompt_version: latest
   model_name: gpt-oss:120b
   temperature: 0.1
@@ -22,7 +22,7 @@ coicop:
 
 annotations:
   s3_path: "s3://projet-budget-famille/data/output-annotation-consolidated-2026-01-05/raw.parquet"
-  sample_size: null
+  sample_size: 100
 
 predictions:
   s3_path: "s3://projet-budget-famille/data/rag/predictions_{timestamp}.parquet"
@@ -33,4 +33,4 @@ eval:
   rules_path: src/eval/rules.yaml
 
 mlflow:
-  experiment_name: rag-coicop
+  experiment_name: rag-coicop-lg
