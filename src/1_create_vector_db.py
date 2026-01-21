@@ -48,23 +48,24 @@ logger.info("Starting data import process")
 query = f"""
     SELECT
         *
-    FROM read_csv('{config["coicop"]["path"]}');
+    FROM read_csv('{config["coicop"]["path_prunned"]}');
 """
-notices_raw = duckdb.sql(query).to_df()
+notices = duckdb.sql(query).to_df()
 
 columns_to_keep = [
-    col for col in notices_raw.columns 
+    col for col in notices.columns 
     if 'column' not in col.lower() and not col.endswith('_en')
 ]
 
-notices_raw = notices_raw[columns_to_keep]
-notices_raw = notices_raw.to_dict(orient="records")
+notices = notices[columns_to_keep]
 
-logger.info(f"Loaded {len(notices_raw)} notices from CSV")
+notices = notices.to_dict(orient="records")
+
+logger.info(f"Loaded {len(notices)} notices from CSV file")
 
 # Create documents to embed and upload to vectorial database
 documents = []
-for notice in notices_raw:
+for notice in notices:
     doc = CoicopDocument(
         code=str(notice['code']),
         label_fr=str(notice['label_fr']),
