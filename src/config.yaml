@@ -1,6 +1,6 @@
 # config.yaml
 qdrant:
-  collection_name: "coicop_test"
+  collection_name: "coicop_prun"
   upload_batch_size: 56
 
 embedding:
@@ -18,11 +18,14 @@ llm:
   max_tokens: 256
 
 coicop:
-  path: "s3://projet-budget-famille/data/coicop-2018_envoi_rmes_20251022.csv"
+  path_raw: "s3://projet-budget-famille/data/coicop-2018_envoi_rmes_20251022.csv"
+  path_prunned_lvl4: "s3://projet-budget-famille/data/coicop-2018_envoi_rmes_20251022_prunned_lvl4.parquet"
+  path_mapping_lvl4: "s3://projet-budget-famille/data/coicop-2018_envoi_rmes_20251022_mapping_prunning_lvl4.parquet"
 
 annotations:
   s3_path: "s3://projet-budget-famille/data/output-annotation-consolidated-2026-01-05/raw.parquet"
-  sample_size: null
+  sample_size: 1000
+  nature: manual_from_books
 
 predictions:
   s3_path: "s3://projet-budget-famille/data/rag/predictions_{timestamp}.parquet"

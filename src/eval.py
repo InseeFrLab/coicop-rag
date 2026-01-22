@@ -4,10 +4,13 @@
 
 import os
 os.chdir("..")
+os.getcwd()
 # os.chdir("coicop-rag")
 import re
 import duckdb
 import pandas as pd
+import yaml
+
 from src.eval.metrics import (
   truncate_code, 
   compute_hierarchical_metrics, 
@@ -20,7 +23,6 @@ from src.eval.metrics import (
 pd.reset_option("display.max_colwidth")
 pd.set_option('display.max_rows', None)
 
-import yaml
 with open("src/config.yaml", "r") as f:
     config = yaml.safe_load(f)
 
@@ -30,8 +32,8 @@ retrieval_size = config["retrieval"]["size"]
 
 con = duckdb.connect(database=":memory:")
 
-s3_path_predictions = "s3://projet-budget-famille/data/rag/predictions_20260107_180045.parquet"
-s3_path_retrieved_codes = "s3://projet-budget-famille/data/rag/retrieved_codes_20260107_180045.parquet"
+s3_path_predictions = "s3://projet-budget-famille/data/rag/predictions_20260119_165453.parquet"
+s3_path_retrieved_codes = "s3://projet-budget-famille/data/rag/retrieved_codes_20260119_165453.parquet"
 query_definition = f"SELECT * FROM read_parquet('{s3_path_predictions}')"
 df_eval = con.sql(query_definition).to_df()
 
@@ -41,71 +43,33 @@ retrieved_codes = con.sql(f"SELECT * FROM read_parquet('{s3_path_retrieved_codes
 
 # Preprocess rag records
 
-from src.utils import merge_eval_and_retreived
+from src.utils import (
+    merge_eval_and_retreived, 
+    apply_rules
+)
+
 records = merge_eval_and_retreived(
     df_eval=df_eval,
     retrieved_codes=retrieved_codes,
-    retrieval_size=retrieval_size,
+    retrieval_size=config["retrieval"]["size"],
 )
-
 len(records)
-## Filtre des cas à gérer a priori -------------
-
-# s3_path_duplicated_annotations = "s3://projet-budget-famille/data/output-annotation-consolidated-2026-01-05/annotations_with_multiple_codes_hors_copain.parquet"
-# df_duplicated = con.sql(f"SELECT * FROM read_parquet('{s3_path_duplicated_annotations}')").to_df()
-
-# df_product_counts = (
-#     df_duplicated["product"]
-#     .value_counts(ascending=True)
-#     .reset_index()
-#     .rename(columns={"index": "product", "product": "count"})
-# )
-# df_product_counts
-
-# df_duplicated[df_duplicated["product"] == "marche"]
-
-
-
-from src.utils import apply_rules
 
 records = apply_rules(
     records=records,
     path_rules=config["eval"]["rules_path"]
 )
 
-# Eval --------------------------------------
-
 records_rag = [record for record in records if record["coding_tool"] == "rag"]
 records_regex = [record for record in records if record["coding_tool"] == "regex"]
 
-len(records_rag)
-len(records_regex)
-
+print(f"RAG records: {len(records_rag)}")
+print(f"Regex records: {len(records_regex)}")
 
 metrics = compute_hierarchical_metrics(
-  records=records_rag,
-  threshold=threshold_confidence
+    records=records_rag,
+    threshold=config["eval"]["threshold_confidence"]
 )
-
-print_metrics_report(metrics)
-
-error_analysis = analyze_error_sources(metrics)
-print_error_analysis(error_analysis)
-
-metrics_list = export_metrics_to_list(metrics)
-metrics_df = pd.DataFrame(metrics_list)
-
-print("\n" + "=" * 100)
-print("METRICS SUMMARY TABLE")
-print("=" * 100)
-print(metrics_df.to_string(index=False))
-
-
-
-
-
-
-flatten_metrics(metrics)
 
 # ----------------------------------------------
 # Error analyses at level 4  
@@ -139,7 +103,7 @@ n_errors_special_codes = len(errors_special_codes)
 n_errors_special_codes/n_errors
 print(f"""
   Number of errors due to special BDF codes (98, 99) : {n_errors_special_codes})
-  (on a total of {len(errors_list)} errors ==> proprtion = {round(100 * n_errors_special_codes/n_errors, 1)}%)
+  (on a total of {len(errors_list)} errors ==> proportion = {round(100 * n_errors_special_codes/n_errors, 1)}%)
 """)
 
 errors_normal_codes = [x for x in errors_list if (x["code"][:2] not in ("98", "99"))]
