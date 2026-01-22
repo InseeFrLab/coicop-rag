@@ -11,6 +11,7 @@ child codes are considered equivalent to their most aggregated parent.
 
 import logging
 import pandas as pd
+from utils import truncate_code
 
 
 logger = logging.getLogger(__name__)
@@ -220,3 +221,99 @@ def prune_linear_hierarchies(
     notices_filtered, mapping_table = prune_equivalent_children(notices_raw)
 
     return notices_filtered, mapping_table
+
+def prune_annotation_lvl4(
+    annotations: pd.DataFrame,
+    mapping_table_lvl4: pd.DataFrame,
+    notices_raw: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Prune children coicop codes using a linear hierarchy mapping.
+
+    The mapping table only works for coicop codes at level 4 max (nomenclature inconsistencies at level 5 +).
+    ==> Annotation codes must be truncated at level 4 max first.
+
+    This function replaces child codes belonging to strictly linear 
+    hierarchies by their retained parent code, and synchronizes
+    the corresponding COICOP label.
+
+    Parameters
+    ----------
+    annotations : pd.DataFrame
+        DataFrame containing at least:
+        - 'code' : COICOP code (may be level 5 or 6)
+        - 'coicop' : COICOP label associated with the code (before )
+
+    mapping_table_lvl4 : pd.DataFrame
+        Mapping table relevant for level4 max, wih columns:
+        - 'code'
+        - 'code_parent_equivalent'
+
+    notices_raw : pd.DataFrame
+        Raw COICOP nomenclature, containing at least:
+        - 'code'
+        - 'label_fr'
+
+    Returns
+    -------
+    pd.DataFrame
+        A copy of `annotations` where:
+        - 'code' has been truncated to level 4 max, and replaced by the parent equivalent code when relevant
+        - 'coicop' has been replaced by the parent label
+    """
+    annotations = annotations.copy()
+    
+
+    # ------------------------------------------------------------------
+    # 0. Add truncated code column (max = level 4)
+    # ------------------------------------------------------------------
+    annotations["code_truncate4"] = (
+        annotations["code"]
+        .apply(lambda x: truncate_code(x, level=4))
+    )
+
+    # ------------------------------------------------------------------
+    # 1. Build fast lookup structures
+    # ------------------------------------------------------------------
+    code_mapping = (
+        mapping_table_lvl4
+        .set_index("code")["code_parent_equivalent"]
+    )
+
+    label_mapping = (
+        notices_raw  # all levels, no matter
+        .set_index("code")["label_fr"]
+    )
+
+    # ------------------------------------------------------------------
+    # 2. Replace codes using the equivalence mapping
+    # ------------------------------------------------------------------
+
+    annotations["code_mapped"] = (
+        annotations["code_truncate4"]
+        .map(code_mapping)
+        .fillna(annotations["code_truncate4"])
+    )
+
+    # ------------------------------------------------------------------
+    # 3. Replace labels using the mapped codes
+    # ------------------------------------------------------------------
+
+    annotations["coicop_mapped"] = (
+        annotations["code_mapped"]
+        .map(label_mapping)
+        .fillna(annotations["coicop"]) # Special BdF codes like "98", "99" ==> inconsistent with notices
+    )
+
+    # ------------------------------------------------------------------
+    # 4. Finalize output (overwrite original columns)
+    # ------------------------------------------------------------------
+
+    annotations["code"] = annotations["code_mapped"]
+    annotations["coicop"] = annotations["coicop_mapped"]
+
+    annotations = annotations.drop(
+        columns=["code_mapped", "code_truncate4", "coicop_mapped"]
+    )
+
+    return annotations

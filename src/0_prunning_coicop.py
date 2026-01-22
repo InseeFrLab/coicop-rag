@@ -1,5 +1,5 @@
 import os
-# os.chdir("..")
+# os.chdir("coicop-rag/src")
 import duckdb
 import yaml
 from data.pruning import prune_linear_hierarchies
@@ -17,6 +17,9 @@ query = f"""
 """
 notices_raw = duckdb.sql(query).to_df()
 
+# Removing Level 5 (Poste)
+notices_raw = notices_raw.loc[notices_raw["type"] != "Poste"]
+
 # Prunning (filter useless codes)
 notices_filtered, mapping_table = prune_linear_hierarchies(notices_raw)
 
@@ -26,12 +29,12 @@ notices_filtered, mapping_table = prune_linear_hierarchies(notices_raw)
 # Save prunned coicop notices
 con.sql(f"""
     COPY notices_filtered 
-    TO '{config["coicop"]["path_prunned"]}'
+    TO '{config["coicop"]["path_prunned_lvl4"]}'
     (FORMAT PARQUET)
 """)
 
 con.sql(f"""
     COPY mapping_table 
-    TO '{config["coicop"]["path_mapping"]}'
+    TO '{config["coicop"]["path_mapping_lvl4"]}'
     (FORMAT PARQUET)
 """)

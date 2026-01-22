@@ -1,4 +1,5 @@
 import os
+# os.chdir("coicop-rag/src")
 import yaml
 import datetime
 import uuid
@@ -11,6 +12,7 @@ from openai import OpenAI
 from langfuse import Langfuse
 import mlflow
 from data.parsing import extract_json_from_response
+from data.pruning import prune_annotation_lvl4
 from utils import (
     merge_eval_and_retreived, 
     apply_rules
@@ -58,6 +60,7 @@ def main():
         
         # Log parameters
         mlflow.log_params({
+            "collection_name": config['qdrant']['collection_name'],
             "model_name": config["llm"]["model_name"],
             "embedding_model": config["embedding"]["model_name"],
             "temperature": config["llm"]["temperature"],
@@ -103,13 +106,30 @@ def main():
         mlflow.log_param("input_data_path", config['annotations']['s3_path'])
         query_definition = f"SELECT * FROM read_parquet('{config['annotations']['s3_path']}')"
         annotations = con.sql(query_definition).to_df()
-        logger.info(f"Annotations loaded: {len(annotations)} rows")
+             
+        # Limit annotations type (manual, tickets, etc.)
+        nature_annotation = config["annotations"]["nature"]
+        if nature_annotation:
+            annotations = annotations.loc[annotations[nature_annotation]]
+        annotations = annotations[["product", "code", "coicop", "enseigne", "budget"]]
+        logger.info(
+            f"Annotations (type = {nature_annotation or 'all'}) loaded: {len(annotations)} rows"
+        )
+
+        # Pruning annotations : 
+        # Remove children code in linear relation
+        mapping_table_lvl4 = con.sql(f"SELECT * FROM read_parquet('{config['coicop']['path_mapping_lvl4']}')").to_df()
+        notices_raw = con.sql(f"SELECT * FROM read_csv('{config['coicop']['path_raw']}')").to_df()
+        
+        annotations = prune_annotation_lvl4(
+            annotations, 
+            mapping_table_lvl4, 
+            notices_raw
+        )
+        
         
         searched_products = (
-            annotations.loc[
-                annotations["manual_from_books"],
-                ["product", "code", "coicop", "enseigne", "budget"]
-            ]
+            annotations
             .assign(id=lambda x: [str(uuid.uuid4()) for _ in range(len(x))])
             .to_dict(orient="records")
         )

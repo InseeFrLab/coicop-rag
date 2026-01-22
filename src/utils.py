@@ -1,6 +1,6 @@
 import re
 import yaml
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Optional
 import pandas as pd
 import unicodedata
 
@@ -69,3 +69,29 @@ def apply_rules(
         if code is not None:
             entry["code_predict"] = code
     return records_out
+
+
+def truncate_code(code: str, level: int) -> Optional[str]:
+    """
+    Truncate code to specified hierarchical level
+    
+    Args:
+        code: Full code (e.g., '08.1.2.3.4' or '08.1.6')
+        level: Level to truncate to (1-5)
+    
+    Returns:
+        Truncated code or original if already at or below target level,
+        None if invalid
+    """
+    if code is None or not isinstance(code, str) or code == '':
+        return None
+    
+    # Split by dot separator
+    parts = code.split('.')
+    
+    # If code is already at or below target level, return as-is
+    if len(parts) <= level:
+        return code
+    
+    # Otherwise truncate to target level
+    return '.'.join(parts[:level])
