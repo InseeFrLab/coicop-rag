@@ -48,7 +48,7 @@ logger.info("Starting data import process")
 query = f"""
     SELECT
         *
-    FROM read_csv('{config["coicop"]["path_prunned"]}');
+    FROM read_parquet('{config["coicop"]["path_prunned"]}');
 """
 notices = duckdb.sql(query).to_df()
 
