@@ -2,7 +2,6 @@
 # strategies (ex: hierachical or flat)
 
 import os
-# os.chdir("coicop-rag")
 import duckdb
 import yaml
 import uuid
@@ -48,7 +47,7 @@ logger.info("Starting data import process")
 query = f"""
     SELECT
         *
-    FROM read_csv('{config["coicop"]["path"]}');
+    FROM read_csv('{config["coicop"]["path_notice"]}');
 """
 notices_raw = duckdb.sql(query).to_df()
 

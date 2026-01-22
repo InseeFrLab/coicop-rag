@@ -11,18 +11,19 @@ retrieval:
   size: 10
 
 llm:
-  prompt_name: prompt-multi-level-lg
+  prompt_name: prompt-multi-level
   prompt_version: latest
   model_name: gpt-oss:120b
   temperature: 0.1
   max_tokens: 256
 
 coicop:
-  path: "s3://projet-budget-famille/data/coicop-2018_envoi_rmes_20251022.csv"
+  path_notice: "s3://projet-budget-famille/data/coicop-2018_envoi_rmes_20251022.csv"
+  path_code: "s3://projet-budget-famille/data/input-annotation/20260106-coicop2018_et_codes_techniques.csv"
 
 annotations:
   s3_path: "s3://projet-budget-famille/data/output-annotation-consolidated-2026-01-05/raw.parquet"
-  sample_size: 100
+  sample_size: 10
 
 predictions:
   s3_path: "s3://projet-budget-famille/data/rag/predictions_{timestamp}.parquet"
@@ -33,4 +34,4 @@ eval:
   rules_path: src/eval/rules.yaml
 
 mlflow:
-  experiment_name: rag-coicop-lg
+  experiment_name: test
