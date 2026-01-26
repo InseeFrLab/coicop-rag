@@ -95,3 +95,23 @@ def truncate_code(code: str, level: int) -> Optional[str]:
     
     # Otherwise truncate to target level
     return '.'.join(parts[:level])
+
+def get_parents(code: str) -> List[str]:
+    """
+    Get all parent codes for a given code by truncating at each hierarchical level.
+
+    Args:
+        code: The full hierarchical code (e.g., '08.1.2.3.4' or '08.1.6')
+
+    Returns:
+        List of parent codes, each representing a higher level in the hierarchy.
+        Returns empty list if input is invalid or has no parents.
+    """
+    code_level = len(code.split('.'))
+    parents = []
+    for level in range(1, code_level):
+        parents.append(
+            truncate_code(code, level)
+        )
+
+    return parents
