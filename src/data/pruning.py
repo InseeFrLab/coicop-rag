@@ -420,3 +420,41 @@ def trunc_and_prune_lvl4(
     )
 
     return df
+
+
+
+
+def _trunc_and_prune_lvl4(
+    code: str,
+    mapping_table_lvl4: pd.DataFrame,
+) -> str:
+    """
+    Prune children coicop codes using a linear hierarchy mapping.
+
+    The mapping table only works for coicop codes at level 4 max (nomenclature inconsistencies at level 5 +).
+    ==> df codes must be truncated at level 4 max first.
+
+    This function replaces child codes belonging to strictly linear 
+    hierarchies by their retained parent code
+
+    mapping_table_lvl4 : pd.DataFrame
+        Mapping table relevant for level4 max, wih columns:
+        - 'code'
+        - 'code_parent_equivalent'
+
+
+    """
+
+    code_truncate4 = truncate_code(code, level=4)
+
+    code_mapping = (
+        mapping_table_lvl4
+        .set_index("code")["code_parent_equivalent"]
+    )
+
+    code_tpruned = code_mapping.get(code_truncate4)
+
+    if pd.isna(code_tpruned):
+        return code_truncate4
+
+    return code_tpruned
