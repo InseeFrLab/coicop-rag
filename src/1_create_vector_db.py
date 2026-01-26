@@ -11,6 +11,7 @@ from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct
 from openai import OpenAI
 from data.coicop_document import CoicopDocument
+from utils import get_parents
 
 # Config
 
@@ -48,20 +49,32 @@ logger.info("Starting data import process")
 query = f"""
     SELECT
         *
-    FROM read_parquet('{config["coicop"]["path_prunned_lvl4"]}');
+    FROM read_csv('{config["coicop"]["path_raw"]}');
 """
-notices = duckdb.sql(query).to_df()
+notices_df = duckdb.sql(query).to_df()
 
 columns_to_keep = [
-    col for col in notices.columns 
+    col for col in notices_df.columns 
     if 'column' not in col.lower() and not col.endswith('_en')
 ]
 
-notices = notices[columns_to_keep]
+notices_df = notices_df[columns_to_keep]
 
-notices = notices.to_dict(orient="records")
+notices = notices_df.to_dict(orient="records")
 
 logger.info(f"Loaded {len(notices)} notices from CSV file")
+
+# Add family lineage info for all codes
+for notice in notices:
+    code = notice["code"]
+    notice["parents"] = get_parents(code)
+    notice["parents_labels"] = (
+        notices_df.loc[
+            notices_df["code"].isin(notice["parents"]),
+            "label_fr"
+        ].to_list()
+    )
+
 
 # Create documents to embed and upload to vectorial database
 documents = []
@@ -72,7 +85,10 @@ for notice in notices:
         note_generale_fr=notice.get('note_generale_fr'),
         contenu_central_fr=notice.get('contenu_central_fr'),
         contenu_additionnel_fr=notice.get('contenu_additionnel_fr'),
-        note_exclusion_fr=notice.get('note_exclusion_fr')
+        note_exclusion_fr=notice.get('note_exclusion_fr'),
+        parents=notice.get('parents'),
+        parents_labels=notice.get('parents_labels'),
+
     )
     chunk = doc.to_text_chunks()
     documents.append({
