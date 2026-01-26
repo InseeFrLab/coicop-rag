@@ -19,6 +19,7 @@ from qdrant_client import QdrantClient
 from openai import OpenAI
 from langfuse import Langfuse
 import mlflow
+import subprocess
 
 from data.parsing import extract_json_from_response
 from data.pruning import prune_annotation_lvl4
@@ -589,6 +590,23 @@ def export_predictions(con, df_eval, df_retrieved_codes, config, timestamp):
     
     return eval_path, retrieved_path
 
+def get_git_commit_hash():
+    """Récupère le hash du commit Git actuel"""
+    try:
+        return subprocess.check_output(
+            ['git', 'rev-parse', 'HEAD']
+        ).decode('ascii').strip()
+    except:
+        return None
+
+def get_git_branch():
+    """Récupère la branche Git actuelle"""
+    try:
+        return subprocess.check_output(
+            ['git', 'rev-parse', '--abbrev-ref', 'HEAD']
+        ).decode('ascii').strip()
+    except:
+        return None
 
 def compute_and_log_metrics(df_eval, df_retrieved_codes, config):
     """
@@ -686,6 +704,10 @@ def main():
     # Start MLflow run
     with mlflow.start_run(run_name=f"run_{timestamp}"):
         logger.info(f"✓ MLflow run started: {mlflow.active_run().info.run_id}")
+        mlflow.set_tag("git.commit", get_git_commit_hash())
+        mlflow.set_tag("git.branch", get_git_branch())
+        mlflow.set_tag("git.repo", "https://github.com/InseeFrLab/coicop-rag")
+
         
         # Log parameters
         mlflow.log_params({
