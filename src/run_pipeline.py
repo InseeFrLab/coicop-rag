@@ -115,6 +115,7 @@ def main():
         logger.info(
             f"Annotations (type = {nature_annotation or 'all'}) loaded: {len(annotations)} rows"
         )
+        mlflow.log_param("nature_annotation", nature_annotation)
 
         # Pruning annotations : 
         # Remove children code in linear relation
