@@ -6,6 +6,7 @@ Pipeline for automatic COICOP coding using RAG (Retrieval-Augmented Generation)
 """
 
 import os
+# os.chdir("coicop-rag/src")
 import yaml
 import datetime
 import uuid
@@ -22,7 +23,7 @@ import mlflow
 import subprocess
 
 from data.parsing import extract_json_from_response
-from data.pruning import prune_annotation_lvl4
+from data.pruning import prune_annotation_lvl4, trunc_and_prune_lvl4
 from utils import merge_eval_and_retreived, apply_rules
 from eval.metrics import (
     compute_hierarchical_metrics,
@@ -264,7 +265,7 @@ def load_prompt_template(config):
     return prompt_template
 
 
-def load_and_prepare_annotations(con, config):
+def load_and_prepare_annotations(con, config, mapping_table_lvl4, notices_raw):
     """
     Load annotations from S3 and apply filtering/pruning
     
@@ -293,15 +294,7 @@ def load_and_prepare_annotations(con, config):
         f"(type: {nature_annotation or 'all'})"
     )
     
-    # Load mapping tables for pruning
-    mapping_table_lvl4 = con.sql(
-        f"SELECT * FROM read_parquet('{config['coicop']['path_mapping_lvl4']}')"
-    ).to_df()
-    
-    notices_raw = con.sql(
-        f"SELECT * FROM read_csv('{config['coicop']['path_raw']}')"
-    ).to_df()
-    
+ 
     # Prune annotations (remove children codes in linear relation)
     logger.info("Pruning annotations...")
     annotations = prune_annotation_lvl4(
@@ -514,7 +507,7 @@ def parse_llm_responses(llm_responses):
     return llm_responses_parsed, parse_errors
 
 
-def create_evaluation_dataframe(llm_responses_parsed, searched_products, qdrant_results_codes):
+def create_evaluation_dataframe(llm_responses_parsed, searched_products, qdrant_results_codes, prune, mapping_table_lvl4, notices_raw):
     """
     Create evaluation dataframe combining predictions and ground truth
     
@@ -535,11 +528,21 @@ def create_evaluation_dataframe(llm_responses_parsed, searched_products, qdrant_
         pred = llm_responses_parsed[i]
         annotation = searched_products[i]
         row = pred | annotation
-        row["good_pred"] = (row.get("code") == row.get("coicop_pred"))
+        # row["good_pred"] = (row.get("code") == row.get("coicop_pred"))
         rows.append(row)
     
     df_eval = pd.DataFrame(rows)
     
+    # Trunc and prune predicted codes
+    if prune:
+        df_eval = trunc_and_prune_lvl4(
+            df=df_eval,
+            mapping_table_lvl4=mapping_table_lvl4,
+            notices_raw=notices_raw,
+            code_name="coicop_pred",
+            coicop_name=None,
+        )
+
     df_retrieved_codes = pd.DataFrame(qdrant_results_codes)
     df_retrieved_codes.columns = df_retrieved_codes.columns.astype(str)
     df_retrieved_codes["id"] = df_eval["id"]
@@ -650,7 +653,8 @@ def compute_and_log_metrics(df_eval, df_retrieved_codes, config):
     # Compute hierarchical metrics
     metrics = compute_hierarchical_metrics(
         records=records_rag,
-        threshold=config["eval"]["threshold_confidence"]
+        threshold=config["eval"]["threshold_confidence"],
+        predicted_col="coicop_pred",
     )
     
     metrics_mlflow = flatten_metrics(metrics)
@@ -684,6 +688,7 @@ def main():
     parser = setup_argument_parser()
     args = parser.parse_args()
     
+    # args.config = "config.yaml"
     config = load_config(args.config)
     config = merge_config_with_args(config, args)
     
@@ -739,13 +744,23 @@ def main():
         # Load and prepare annotations
         # -----------------------------------------------------------------------
         
+        # Load mapping tables for pruning
+        mapping_table_lvl4 = con.sql(
+            f"SELECT * FROM read_parquet('{config['coicop']['path_mapping_lvl4']}')"
+        ).to_df()
+        
+        notices_raw = con.sql(
+            f"SELECT * FROM read_csv('{config['coicop']['path_raw']}')"
+        ).to_df()
+        
         mlflow.log_param("input_data_path", config['annotations']['s3_path'])
         
-        searched_products, nature_annotation = load_and_prepare_annotations(con, config)
+        searched_products, nature_annotation = load_and_prepare_annotations(con, config, mapping_table_lvl4, notices_raw)
         
         mlflow.log_param("nature_annotation", nature_annotation)
         mlflow.log_metric("num_products", len(searched_products))
-        
+
+
         # -----------------------------------------------------------------------
         # Execute main pipeline steps
         # -----------------------------------------------------------------------
@@ -775,6 +790,7 @@ def main():
         
         # Step 4: Generate LLM responses
         llm_responses = generate_llm_responses(messages, client_llm, config)
+        llm_responses = generate_llm_responses(messages, client_llm, config)
         
         # Step 5: Parse responses
         llm_responses_parsed, parse_errors = parse_llm_responses(llm_responses)
@@ -782,11 +798,14 @@ def main():
         
         # Step 6: Create evaluation dataset
         df_eval, df_retrieved_codes = create_evaluation_dataframe(
-            llm_responses_parsed,
-            searched_products,
-            qdrant_results_codes
+            llm_responses_parsed=llm_responses_parsed,
+            searched_products=searched_products,
+            qdrant_results_codes=qdrant_results_codes,
+            prune=True,
+            mapping_table_lvl4=mapping_table_lvl4, 
+            notices_raw=notices_raw,
         )
-        
+
         # Step 7: Export predictions
         eval_path, retrieved_path = export_predictions(
             con,

@@ -24,7 +24,7 @@ coicop:
 
 annotations:
   s3_path: "s3://projet-budget-famille/data/output-annotation-consolidated-2026-01-05/raw.parquet"
-  sample_size: 8
+  sample_size: 3
   nature: manual_from_books
 
 predictions:
