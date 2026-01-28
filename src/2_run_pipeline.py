@@ -23,8 +23,8 @@ import mlflow
 import subprocess
 
 from data.parsing import extract_json_from_response
-from data.pruning import prune_annotation_lvl4, trunc_and_prune_lvl4
-from utils import merge_eval_and_retreived, apply_rules
+from data.pruning import prune_annotation_lvl4, trunc_and_prune_lvl4, _trunc_and_prune_lvl4
+from utils import merge_eval_and_retreived, apply_rules, load_rules
 from eval.metrics import (
     compute_hierarchical_metrics,
     flatten_metrics,
@@ -152,6 +152,12 @@ def setup_argument_parser():
         type=str,
         help='MLflow experiment name (overrides config)'
     )
+
+    parser.add_argument(
+        '--noprune',
+        action='store_true',
+        help='Enable pruning'
+    )
     
     return parser
 
@@ -195,6 +201,9 @@ def merge_config_with_args(config, args):
         
     if args.experiment_name is not None:
         config['mlflow']['experiment_name'] = args.experiment_name
+    
+    if args.noprune is False:
+        config['eval']['prune'] = True
     
     return config
 
@@ -507,7 +516,13 @@ def parse_llm_responses(llm_responses):
     return llm_responses_parsed, parse_errors
 
 
-def create_evaluation_dataframe(llm_responses_parsed, searched_products, qdrant_results_codes, prune, mapping_table_lvl4, notices_raw):
+def create_evaluation_dataframe(
+        llm_responses_parsed,
+        searched_products,
+        qdrant_results_codes,
+        prune,
+        mapping_table_lvl4,
+    ):
     """
     Create evaluation dataframe combining predictions and ground truth
     
@@ -529,27 +544,41 @@ def create_evaluation_dataframe(llm_responses_parsed, searched_products, qdrant_
         annotation = searched_products[i]
         row = pred | annotation
         # row["good_pred"] = (row.get("code") == row.get("coicop_pred"))
+        if prune:
+            # Trunc and prune LLM's prediction
+            row["coicop_pred_tprune"] = _trunc_and_prune_lvl4(
+                code=row["coicop_pred"],
+                mapping_table_lvl4=mapping_table_lvl4
+            )
+            # Trunc and prune annotations
+            row["code_tprune"] = _trunc_and_prune_lvl4(
+                code=row["code"],
+                mapping_table_lvl4=mapping_table_lvl4
+            )
         rows.append(row)
     
     df_eval = pd.DataFrame(rows)
     
-    # Trunc and prune predicted codes
-    if prune:
-        df_eval = trunc_and_prune_lvl4(
-            df=df_eval,
-            mapping_table_lvl4=mapping_table_lvl4,
-            notices_raw=notices_raw,
-            code_name="coicop_pred",
-            coicop_name=None,
-        )
+    if prune: 
+        qdrant_results_codes_tprune = [
+            [_trunc_and_prune_lvl4(code, mapping_table_lvl4) for code in sublist]
+            for sublist in qdrant_results_codes
+        ]
+        df_retrieved_codes_tprune = pd.DataFrame(qdrant_results_codes_tprune)
+        df_retrieved_codes_tprune.columns = df_retrieved_codes_tprune.columns.astype(str)
+        df_retrieved_codes_tprune["id"] = df_eval["id"]
 
     df_retrieved_codes = pd.DataFrame(qdrant_results_codes)
     df_retrieved_codes.columns = df_retrieved_codes.columns.astype(str)
     df_retrieved_codes["id"] = df_eval["id"]
     
     logger.info(f"✓ Evaluation dataset created: {len(df_eval)} rows")
+
+    if prune: 
+        return df_eval, df_retrieved_codes, df_retrieved_codes_tprune
     
     return df_eval, df_retrieved_codes
+  
 
 
 def export_predictions(con, df_eval, df_retrieved_codes, config, timestamp):
@@ -593,6 +622,7 @@ def export_predictions(con, df_eval, df_retrieved_codes, config, timestamp):
     
     return eval_path, retrieved_path
 
+
 def get_git_commit_hash():
     """Récupère le hash du commit Git actuel"""
     try:
@@ -601,6 +631,7 @@ def get_git_commit_hash():
         ).decode('ascii').strip()
     except:
         return None
+
 
 def get_git_branch():
     """Récupère la branche Git actuelle"""
@@ -611,7 +642,8 @@ def get_git_branch():
     except:
         return None
 
-def compute_and_log_metrics(df_eval, df_retrieved_codes, config):
+
+def compute_and_log_metrics(df_eval, df_retrieved_codes, config, prune, rules):
     """
     Compute evaluation metrics and log to MLflow
     
@@ -632,12 +664,14 @@ def compute_and_log_metrics(df_eval, df_retrieved_codes, config):
         df_eval=df_eval,
         retrieved_codes=df_retrieved_codes,
         retrieval_size=config["retrieval"]["size"],
+        code_name="code_tprune" if prune else "code",
+        col_retrieved_codes_name="list_retrieved_codes",
     )
     
     # Apply business rules
     records = apply_rules(
         records=records,
-        path_rules=config["eval"]["rules_path"]
+        rules=rules
     )
     
     # Split records by coding tool
@@ -654,7 +688,9 @@ def compute_and_log_metrics(df_eval, df_retrieved_codes, config):
     metrics = compute_hierarchical_metrics(
         records=records_rag,
         threshold=config["eval"]["threshold_confidence"],
-        predicted_col="coicop_pred",
+        predicted_col="coicop_pred_tprune" if prune else "coicop_pred",
+        label_col="code_tprune" if prune else "code",
+        retrieved_col="list_retrieved_codes"
     )
     
     metrics_mlflow = flatten_metrics(metrics)
@@ -693,10 +729,9 @@ def main():
     config = merge_config_with_args(config, args)
     
     logger.info(f"✓ Configuration loaded: {config['llm']['model_name']}")
-    
+
     # Generate timestamp for this run
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    sample_size = config["annotations"]["sample_size"]
     
     # ---------------------------------------------------------------------------
     # Setup MLflow tracking
@@ -722,10 +757,11 @@ def main():
             "temperature": config["llm"]["temperature"],
             "max_tokens": config["llm"]["max_tokens"],
             "retrieval_size": config["retrieval"]["size"],
-            "sample_size": sample_size,
+            "sample_size": config["annotations"]["sample_size"],
             "prompt_name": config["llm"]["prompt_name"],
             "prompt_version": config["llm"]["prompt_version"],
-            "threshold_confidence": config["eval"]["threshold_confidence"]
+            "threshold_confidence": config["eval"]["threshold_confidence"],
+            "prune": config['eval']['prune']
         })
         
         # -----------------------------------------------------------------------
@@ -753,13 +789,15 @@ def main():
             f"SELECT * FROM read_csv('{config['coicop']['path_raw']}')"
         ).to_df()
         
+        # Import products to code (annotated)
         mlflow.log_param("input_data_path", config['annotations']['s3_path'])
-        
         searched_products, nature_annotation = load_and_prepare_annotations(con, config, mapping_table_lvl4, notices_raw)
-        
+    
         mlflow.log_param("nature_annotation", nature_annotation)
         mlflow.log_metric("num_products", len(searched_products))
 
+        # Import deterministic coding rules
+        rules = load_rules(config["eval"]["rules_path"])
 
         # -----------------------------------------------------------------------
         # Execute main pipeline steps
@@ -790,20 +828,20 @@ def main():
         
         # Step 4: Generate LLM responses
         llm_responses = generate_llm_responses(messages, client_llm, config)
-        llm_responses = generate_llm_responses(messages, client_llm, config)
         
         # Step 5: Parse responses
         llm_responses_parsed, parse_errors = parse_llm_responses(llm_responses)
         mlflow.log_metric("parse_errors", parse_errors)
         
         # Step 6: Create evaluation dataset
-        df_eval, df_retrieved_codes = create_evaluation_dataframe(
-            llm_responses_parsed=llm_responses_parsed,
-            searched_products=searched_products,
-            qdrant_results_codes=qdrant_results_codes,
-            prune=True,
-            mapping_table_lvl4=mapping_table_lvl4, 
-            notices_raw=notices_raw,
+        df_eval, df_retrieved_codes, df_retrieved_codes_tprune = (
+            create_evaluation_dataframe(
+                    llm_responses_parsed=llm_responses_parsed,
+                    searched_products=searched_products,
+                    qdrant_results_codes=qdrant_results_codes,
+                    prune=config['eval']['prune'],
+                    mapping_table_lvl4=mapping_table_lvl4, 
+                )
         )
 
         # Step 7: Export predictions
@@ -819,7 +857,14 @@ def main():
         mlflow.log_param("retrieved_codes_output_path", retrieved_path)
         
         # Step 8: Compute and log metrics
-        metrics = compute_and_log_metrics(df_eval, df_retrieved_codes, config)
+
+        metrics = compute_and_log_metrics(
+            df_eval, 
+            df_retrieved_codes_tprune, config, 
+            config['eval']['prune'],
+            rules,
+        )
+
         
         # -----------------------------------------------------------------------
         # Generate and save metrics report

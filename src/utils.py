@@ -8,17 +8,19 @@ import unicodedata
 def merge_eval_and_retreived(
     df_eval: pd.DataFrame,
     retrieved_codes: pd.DataFrame,
-    retrieval_size: int
+    retrieval_size: int,
+    code_name: str,
+    col_retrieved_codes_name: str = "list_retrieved_codes"
     ):
 
     cols = [str(i) for i in range(retrieval_size)]
-    retrieved_codes["list_retrieved_codes"] = retrieved_codes[cols].values.tolist()
+    retrieved_codes[col_retrieved_codes_name] = retrieved_codes[cols].values.tolist()
     retrieved_codes = retrieved_codes.drop(cols, axis=1)
 
     df_eval = df_eval.merge(retrieved_codes, how="left", on="id")
 
     df_eval["in_retrieved"] = df_eval.apply(
-        lambda row: row["code"] in row["list_retrieved_codes"],
+        lambda row: row[code_name] in row[col_retrieved_codes_name],
         axis=1
     )
 
@@ -58,16 +60,16 @@ def normalize(text: str) -> str:
 
 def apply_rules(
     records: List[Dict],
-    path_rules: str = "src/eval/rules.yaml"
+    rules,
 ):
     records_out = records.copy()
-    rules = load_rules(path_rules)
+    
     for entry in records_out:
         product = normalize(entry["product"])
         tool, code = predict_code(product, rules)
         entry["coding_tool"] = tool
         if code is not None:
-            entry["code_predict"] = code
+            entry["code_rule_predict"] = code
     return records_out
 
 
