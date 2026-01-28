@@ -21,6 +21,7 @@ from openai import OpenAI
 from langfuse import Langfuse
 import mlflow
 import subprocess
+import random
 
 from data.parsing import extract_json_from_response
 from data.pruning import prune_annotation_lvl4, trunc_and_prune_lvl4, _trunc_and_prune_lvl4
@@ -450,6 +451,19 @@ def prepare_prompts(searched_products, qdrant_results_texts, qdrant_results_code
     return messages
 
 
+def log_prompts_sample(messages, n, base_filename: str = "prompts/prompt"):
+    n_max = len(messages)
+    n = n_max if n > n_max else n
+    index = random.sample(range(n_max), n)
+    messages_to_log = [messages[m] for m in index]
+
+    for idx, prompt in enumerate(messages_to_log):
+        filename = f"{base_filename}_{idx}.md"
+        # Concatène le contenu de tous les messages dans le prompt
+        text = "\n\n".join(f"### {msg['role'].capitalize()}\n{msg['content']}" for msg in prompt)
+        mlflow.log_text(text, filename)
+
+
 def generate_llm_responses(messages, client_llm, config):
     """
     Generate predictions using LLM
@@ -825,6 +839,8 @@ def main():
             qdrant_results_codes,
             prompt_template
         )
+
+        log_prompts_sample(messages, n=5)
         
         # Step 4: Generate LLM responses
         llm_responses = generate_llm_responses(messages, client_llm, config)
