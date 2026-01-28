@@ -23,7 +23,7 @@ coicop:
 
 annotations:
   s3_path: "s3://projet-budget-famille/data/output-annotation-consolidated-2026-01-05/raw.parquet"
-  sample_size: 10
+  sample_size: 50
 
 predictions:
   s3_path: "s3://projet-budget-famille/data/rag/predictions_{timestamp}.parquet"
