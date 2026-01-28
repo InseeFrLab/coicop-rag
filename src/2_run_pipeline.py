@@ -497,7 +497,6 @@ def parse_llm_responses(llm_responses):
     logger.info("Parsing LLM responses...")
     
     llm_responses_parsed = []
-    parse_errors = 0
     
     for llm_response in llm_responses:
         content = llm_response.choices[0].message.content
@@ -505,8 +504,9 @@ def parse_llm_responses(llm_responses):
             llm_responses_parsed.append(extract_json_from_response(content))
         except Exception as e:
             logger.warning(f"Parsing error: {e}")
-            parse_errors += 1
-            llm_responses_parsed.append({})
+            llm_responses_parsed.append({'parsed': False})
+    
+    parse_errors = sum(dic == {'parsed': False} for dic in llm_responses_parsed)
     
     logger.info(
         f"✓ Responses parsed: {len(llm_responses_parsed)} "
@@ -543,11 +543,10 @@ def create_evaluation_dataframe(
         pred = llm_responses_parsed[i]
         annotation = searched_products[i]
         row = pred | annotation
-        # row["good_pred"] = (row.get("code") == row.get("coicop_pred"))
         if prune:
             # Trunc and prune LLM's prediction
             row["coicop_pred_tprune"] = _trunc_and_prune_lvl4(
-                code=row["coicop_pred"],
+                code=row.get("coicop_pred", None), # None if not parsed
                 mapping_table_lvl4=mapping_table_lvl4
             )
             # Trunc and prune annotations
@@ -724,7 +723,7 @@ def main():
     parser = setup_argument_parser()
     args = parser.parse_args()
     
-    # args.config = "config.yaml"
+    # config = load_config("config.yaml")
     config = load_config(args.config)
     config = merge_config_with_args(config, args)
     
@@ -797,6 +796,7 @@ def main():
         mlflow.log_metric("num_products", len(searched_products))
 
         # Import deterministic coding rules
+        # rules = load_rules("eval/rules.yaml")
         rules = load_rules(config["eval"]["rules_path"])
 
         # -----------------------------------------------------------------------
@@ -830,8 +830,8 @@ def main():
         llm_responses = generate_llm_responses(messages, client_llm, config)
         
         # Step 5: Parse responses
-        llm_responses_parsed, parse_errors = parse_llm_responses(llm_responses)
-        mlflow.log_metric("parse_errors", parse_errors)
+        llm_responses_parsed, n_parse_errors = parse_llm_responses(llm_responses)
+        mlflow.log_metric("parse_errors", n_parse_errors)
         
         # Step 6: Create evaluation dataset
         df_eval, df_retrieved_codes, df_retrieved_codes_tprune = (
