@@ -441,7 +441,7 @@ def prepare_prompts(searched_products, qdrant_results_texts, qdrant_results_code
             prompt_template.compile(
                 product=searched_product["product"],
                 enseigne_bloc=enseigne_bloc,
-                proposed_codes=qdrant_results_texts[i],
+                proposed_codes="\n\n## ".join(qdrant_results_texts[i]),
                 list_proposed_codes=qdrant_results_codes[i]
             )
         )
@@ -840,7 +840,7 @@ def main():
             prompt_template
         )
 
-        log_prompts_sample(messages, n=5)
+        log_prompts_sample(messages, n=6)
         
         # Step 4: Generate LLM responses
         llm_responses = generate_llm_responses(messages, client_llm, config)
