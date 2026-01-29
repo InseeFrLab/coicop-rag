@@ -55,6 +55,8 @@ def predict_code(product: str, rules: List[Tuple[re.Pattern, str]]) -> tuple[str
     return "rag", None
 
 def normalize(text: str) -> str:
+    if text is None:
+        return ""
     text = unicodedata.normalize("NFKD", text)
     return "".join(c for c in text if not unicodedata.combining(c))
 
