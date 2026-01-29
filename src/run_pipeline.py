@@ -7,8 +7,8 @@ from tqdm import tqdm
 import duckdb
 import pandas as pd
 from qdrant_client import QdrantClient
-from openai import OpenAI
-from langfuse import Langfuse
+from langfuse.openai import OpenAI
+from langfuse import Langfuse, observe, propagate_attributes
 import mlflow
 from data.parsing import extract_json_from_response
 from utils import (
@@ -31,8 +31,10 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 
-def main():
+@observe(name="rag_COICOP")
+def main(): # le décorateur capture les inputs / output de la fonction automatiquement
     logger.info("="*80)
     logger.info("Starting RAG COICOP pipeline")
     logger.info("="*80)
@@ -45,7 +47,6 @@ def main():
     logger.info(f"Configuration loaded: {config['llm']['model_name']}")
     
     sample_size = config["annotations"]["sample_size"]
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     
     # MLflow setup
     logger.info("Setting up MLflow...")
@@ -85,7 +86,6 @@ def main():
         )
         logger.info(f"Connected to Qdrant - Collection: {config['qdrant']['collection_name']}")
 
-        
         # LLM config
         logger.info("Connecting to LLM...")
         client_llm = OpenAI(
@@ -128,36 +128,29 @@ def main():
         logger.info(f"Number of spendings to code: {num_products}")
         mlflow.log_metric("num_products", num_products)
         
-        # Generate embeddings
-        logger.info("="*80)
-        logger.info("STEP 1: Generating embeddings")
-        logger.info("="*80)
-        
-        with lf.start_as_current_observation(as_type="span", name="rag_coicop"):
+        # permet de propager les infos sur toutes les traces langfuse
+        with propagate_attributes(
+            session_id=f"session_{timestamp}",
+            user_id=os.environ["GIT_USER_NAME"],
+            tags=["COICOP", "classification"],
+            version=config["llm"]["prompt_version"]
+        ):
+            # Generate embeddings
+            logger.info("="*80)
+            logger.info("STEP 1: Generating embeddings")
+            logger.info("="*80)
 
             search_embeddings = []
 
-            with lf.start_as_current_observation(as_type="span", name="stage_embedding"):
+            with lf.start_as_current_span(name="stage_embedding"):
+                for id, searched_product in enumerate(tqdm(searched_products, desc="Generating embeddings")):
 
-                for id, searched_product in enumerate(tqdm(searched_products, 
-                                                        desc="Generating embeddings")):
-
-                    with lf.start_as_current_observation(as_type='embedding',
-                                                        name="gen_embedding", metadata={"index": id},
-                                                        model=config["embedding"]["model_name"],
-                                                        input=searched_product['product']):
-
-                        response = client_llm.embeddings.create(
-                            model=config["embedding"]["model_name"],
-                            input=searched_product['product']
-                        )
-                        lf.update_current_generation(
-                            name=searched_products[id]["product"],
-                            model=config["embedding"]["model_name"],
-                            input=searched_product['product'],
-                            output=response.data[0].embedding
-                        )
-                        search_embeddings.append(response.data[0].embedding)
+                    response = client_llm.embeddings.create(
+                        model=config["embedding"]["model_name"],
+                        input=searched_product['product'],
+                        name=f"token_{id}"
+                    )
+                    search_embeddings.append(response.data[0].embedding)
 
                 embedding_dim = len(search_embeddings[0])
                 logger.info(f"Embeddings generated: {len(search_embeddings)} vectors of dimension {embedding_dim}")
@@ -170,27 +163,22 @@ def main():
                         
             qdrant_results_texts = []
             qdrant_results_codes = []
-
-            with lf.start_as_current_span(name="stage_vector_search"):
                     
-                for id, search_embedding in enumerate(tqdm(search_embeddings, desc="Vector search")):
-                    with lf.start_as_current_span(name="Vector search",metadata={"index": id}):
-                        points = client_qdrant.query_points(
-                            collection_name=config["qdrant"]["collection_name"],
-                            query=search_embedding,
-                            limit=config["retrieval"]["size"],
-                        )
+            for id, search_embedding in enumerate(tqdm(search_embeddings, desc="Vector search")):
+                points = client_qdrant.query_points(
+                    collection_name=config["qdrant"]["collection_name"],
+                    query=search_embedding,
+                    limit=config["retrieval"]["size"],
+                )
 
-                        topk_text = [point["payload"]["text"] for point in points.model_dump()["points"]]
-                        topk_code = [point["payload"]["code"] for point in points.model_dump()["points"]]
-                                    
-                        qdrant_results_texts.append(topk_text)
-                        qdrant_results_codes.append(topk_code)
-
-                        lf.update_current_span(output=topk_code, metadata={"top_k": len(topk_code)})
-                    
-                logger.info(f"Vector searches completed: {len(qdrant_results_texts)}")
-                logger.info(f"Points returned per search: {len(qdrant_results_texts[0])}")
+                topk_text = [point["payload"]["text"] for point in points.model_dump()["points"]]
+                topk_code = [point["payload"]["code"] for point in points.model_dump()["points"]]
+                            
+                qdrant_results_texts.append(topk_text)
+                qdrant_results_codes.append(topk_code)
+                
+            logger.info(f"Vector searches completed: {len(qdrant_results_texts)}")
+            logger.info(f"Points returned per search: {len(qdrant_results_texts[0])}")
                 
             # Generate prompts
             logger.info("="*80)
@@ -223,41 +211,31 @@ def main():
             llm_responses = []
 
             with lf.start_as_current_span(name="stage_llm"):
-
                 for id, message in enumerate(tqdm(messages, desc="LLM generation")):
-
-                    with lf.start_as_current_observation(as_type='generation', name="gen_llm",
-                                                        metadata={"index": id}):
-
-                        llm_response = client_llm.chat.completions.create(
+                    llm_response = client_llm.chat.completions.create(
                             model=config["llm"]["model_name"],
                             messages=message,
                             temperature=config["llm"]["temperature"],
                             max_tokens=config["llm"]["max_tokens"],
-                            response_format={"type": "json_object"}
-                        )
-                        llm_responses.append(llm_response)
-
-                        lf.update_current_generation(
-                            name=searched_products[id]["product"],
-                            model=config["llm"]["model_name"],
-                            model_parameters={
-                                "temperature": config['llm']['temperature'],
-                                "max_tokens": config['llm']['max_tokens']
-                            },
-                            input=message,
-                            output=llm_response.choices[0].message.content,
+                            response_format={"type": "json_object"},
+                            name=f"message_{id}",
                             metadata={
-                                "index": id
-                            },
-                            usage_details={
-                                "input_tokens": llm_response.usage.prompt_tokens,
-                                "output_tokens": llm_response.usage.completion_tokens,
-                                "total_tokens": llm_response.usage.total_tokens
+                                "langfuse_session_id": f"session_{timestamp}",
+                                "langfuse_user_id": os.environ["GIT_USER_NAME"],
+                                "langfuse_tags": ["COICOP", "classification"]
                             }
-                        )
-                
-                logger.info(f"LLM responses generated: {len(llm_responses)}")
+                    )
+                    llm_responses.append(llm_response)
+                lf.update_current_span(
+                    input={
+                        "model": config["llm"]["model_name"],
+                        "count_message": len(messages),
+                        "max_tokens": config["llm"]["max_tokens"]
+                    },
+                    output={
+                        "count_responses": len(llm_responses)
+                    })
+            logger.info(f"LLM responses generated: {len(llm_responses)}")
 
             # Parse responses
             logger.info("Parsing LLM responses...")
@@ -362,24 +340,24 @@ def main():
             for metric_name, metric_value in metrics_mlflow.items():
                 mlflow.log_metric(metric_name, metric_value)
                 logger.info(f"  {metric_name}: {metric_value:.4f}")
-            
-        # Print metrics report
-        logger.info("="*80)
-        logger.info("METRICS REPORT")
-        logger.info("="*80)
-        #print_metrics_report(metrics)
-        # print_metrics_report(metrics)
-        # report_path = save_metrics_report_as_artifact(metrics, output_path="reports.txt")
-        write_metrics_report(metrics, "report.txt")
-        mlflow.log_artifact("report.txt", artifact_path="reports")
+                
+            # Print metrics report
+            logger.info("="*80)
+            logger.info("METRICS REPORT")
+            logger.info("="*80)
+            #print_metrics_report(metrics)
+            # print_metrics_report(metrics)
+            # report_path = save_metrics_report_as_artifact(metrics, output_path="reports.txt")
+            write_metrics_report(metrics, "report.txt")
+            mlflow.log_artifact("report.txt", artifact_path="reports")
 
-        # Log config as artifact
-        mlflow.log_dict(config, "config.yaml")
-    
-        logger.info("="*80)
-        logger.info("Pipeline completed successfully!")
-        logger.info(f"MLflow run ID: {mlflow.active_run().info.run_id}")
-        logger.info("="*80)
+            # Log config as artifact
+            mlflow.log_dict(config, "config.yaml")
+        
+            logger.info("="*80)
+            logger.info("Pipeline completed successfully!")
+            logger.info(f"MLflow run ID: {mlflow.active_run().info.run_id}")
+            logger.info("="*80)
 
 
 if __name__ == "__main__":
