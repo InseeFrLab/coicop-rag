@@ -32,8 +32,10 @@ retrieval_size = config["retrieval"]["size"]
 
 con = duckdb.connect(database=":memory:")
 
-s3_path_predictions = "s3://projet-budget-famille/data/rag/predictions_20260119_165453.parquet"
-s3_path_retrieved_codes = "s3://projet-budget-famille/data/rag/retrieved_codes_20260119_165453.parquet"
+
+
+s3_path_predictions = "s3://projet-budget-famille/data/rag/predictions_20260129_133952.parquet"
+s3_path_retrieved_codes = "s3://projet-budget-famille/data/rag/retrieved_codes_20260129_133952.parquet"
 query_definition = f"SELECT * FROM read_parquet('{s3_path_predictions}')"
 df_eval = con.sql(query_definition).to_df()
 
