@@ -317,3 +317,144 @@ def prune_annotation_lvl4(
     )
 
     return annotations
+
+
+
+def trunc_and_prune_lvl4(
+    df: pd.DataFrame,
+    mapping_table_lvl4: pd.DataFrame,
+    notices_raw: pd.DataFrame,
+    code_name: str,
+    coicop_name=None,
+) -> pd.DataFrame:
+    """
+    Prune children coicop codes using a linear hierarchy mapping.
+
+    The mapping table only works for coicop codes at level 4 max (nomenclature inconsistencies at level 5 +).
+    ==> df codes must be truncated at level 4 max first.
+
+    This function replaces child codes belonging to strictly linear 
+    hierarchies by their retained parent code, and synchronizes
+    the corresponding COICOP label.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame containing at least:
+        - code_name : COICOP code (may be level 5 or 6)
+        - coicop_name : COICOP label associated with the code (before )
+
+    mapping_table_lvl4 : pd.DataFrame
+        Mapping table relevant for level4 max, wih columns:
+        - 'code'
+        - 'code_parent_equivalent'
+
+    notices_raw : pd.DataFrame
+        Raw COICOP nomenclature, containing at least:
+        - 'code'
+        - 'label_fr'
+
+    Returns
+    -------
+    pd.DataFrame
+        A copy of `df` where:
+        - code_name has been truncated to level 4 max, and replaced by the parent equivalent code when relevant
+        - coicop_name has been replaced by the parent label
+    """
+    df = df.copy()
+    
+
+    # ------------------------------------------------------------------
+    # 0. Add truncated code column (max = level 4)
+    # ------------------------------------------------------------------
+    df["code_truncate4"] = (
+        df[code_name]
+        .apply(lambda x: truncate_code(x, level=4))
+    )
+
+    # ------------------------------------------------------------------
+    # 1. Build fast lookup structures
+    # ------------------------------------------------------------------
+    code_mapping = (
+        mapping_table_lvl4
+        .set_index("code")["code_parent_equivalent"]
+    )
+
+    label_mapping = (
+        notices_raw  # all levels, no matter
+        .set_index("code")["label_fr"]
+    )
+
+    # ------------------------------------------------------------------
+    # 2. Replace codes using the equivalence mapping
+    # ------------------------------------------------------------------
+
+    df["code_mapped"] = (
+        df["code_truncate4"]
+        .map(code_mapping)
+        .fillna(df["code_truncate4"])
+    )
+
+    # ------------------------------------------------------------------
+    # 3. Replace labels using the mapped codes
+    # ------------------------------------------------------------------
+    if coicop_name:
+        df["coicop_mapped"] = (
+            df["code_mapped"]
+            .map(label_mapping)
+            .fillna(df[coicop_name]) # Special BdF codes like "98", "99" ==> inconsistent with notices
+        )
+
+    # ------------------------------------------------------------------
+    # 4. Finalize output (overwrite original columns)
+    # ------------------------------------------------------------------
+
+    df[f"{code_name}_tpruned"] = df["code_mapped"]
+    
+    if coicop_name:
+        df[f"{coicop_name}_tpruned"] = df["coicop_mapped"]
+
+    df = df.drop(
+        columns=["code_mapped", "code_truncate4", "coicop_mapped"],
+        errors='ignore'  # if coicop_mapped absent
+    )
+
+    return df
+
+
+
+
+def _trunc_and_prune_lvl4(
+    code: str,
+    mapping_table_lvl4: pd.DataFrame,
+) -> str:
+    """
+    Prune children coicop codes using a linear hierarchy mapping.
+
+    The mapping table only works for coicop codes at level 4 max (nomenclature inconsistencies at level 5 +).
+    ==> df codes must be truncated at level 4 max first.
+
+    This function replaces child codes belonging to strictly linear 
+    hierarchies by their retained parent code
+
+    mapping_table_lvl4 : pd.DataFrame
+        Mapping table relevant for level4 max, wih columns:
+        - 'code'
+        - 'code_parent_equivalent'
+
+
+    """
+
+    code_truncate4 = truncate_code(code, level=4)
+
+    code_mapping = (
+        mapping_table_lvl4
+        .set_index("code")["code_parent_equivalent"]
+    )
+
+    code_tpruned = code_mapping.get(code_truncate4)
+
+    if pd.isna(code_tpruned):
+        return code_truncate4
+
+    return code_tpruned

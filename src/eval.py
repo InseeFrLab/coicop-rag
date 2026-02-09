@@ -32,45 +32,41 @@ retrieval_size = config["retrieval"]["size"]
 
 con = duckdb.connect(database=":memory:")
 
-s3_path_predictions = "s3://projet-budget-famille/data/rag/predictions_20260119_165453.parquet"
-s3_path_retrieved_codes = "s3://projet-budget-famille/data/rag/retrieved_codes_20260119_165453.parquet"
+
+
+s3_path_predictions = "s3://projet-budget-famille/data/rag/predictions_20260129_133952.parquet"
+s3_path_retrieved_codes = "s3://projet-budget-famille/data/rag/retrieved_codes_20260129_133952.parquet"
 query_definition = f"SELECT * FROM read_parquet('{s3_path_predictions}')"
 df_eval = con.sql(query_definition).to_df()
 
-retrieved_codes = con.sql(f"SELECT * FROM read_parquet('{s3_path_retrieved_codes}')").to_df()
+df_retrieved_codes = con.sql(f"SELECT * FROM read_parquet('{s3_path_retrieved_codes}')").to_df()
 
-# Preprocessing --------------------------------------
 
-# Preprocess rag records
+prune = True
 
-from src.utils import (
-    merge_eval_and_retreived, 
-    apply_rules
-)
+from src.utils import merge_eval_and_retreived, apply_rules, load_rules
+rules = load_rules(config["eval"]["rules_path"])
 
 records = merge_eval_and_retreived(
     df_eval=df_eval,
-    retrieved_codes=retrieved_codes,
+    retrieved_codes=df_retrieved_codes,
     retrieval_size=config["retrieval"]["size"],
+    code_name="code_tprune" if prune else "code",
+    col_retrieved_codes_name="list_retrieved_codes",
 )
-len(records)
 
 records = apply_rules(
     records=records,
-    path_rules=config["eval"]["rules_path"]
+    rules=rules
 )
-
+    
+# Split records by coding tool
 records_rag = [record for record in records if record["coding_tool"] == "rag"]
 records_regex = [record for record in records if record["coding_tool"] == "regex"]
-
-print(f"RAG records: {len(records_rag)}")
-print(f"Regex records: {len(records_regex)}")
-
-metrics = compute_hierarchical_metrics(
-    records=records_rag,
-    threshold=config["eval"]["threshold_confidence"]
-)
-
+    
+print(f"  → RAG records: {len(records_rag)}")
+print(f"  → Regex records: {len(records_regex)}")
+    
 # ----------------------------------------------
 # Error analyses at level 4  
 
@@ -82,11 +78,12 @@ metrics = compute_hierarchical_metrics(
     label_in_retrieved_list
 ) = calculate_accuracy_at_level(
     records=records_rag,
-    predicted_col="coicop_pred",
-    label_col="code",
+    predicted_col="coicop_pred_tprune" if prune else "coicop_pred",
+    label_col="code_tprune" if prune else "code",
     level=4,
     retrieved_col='list_retrieved_codes'
 )
+
 
 errors_list = [x for x, m in zip(records_rag, result_list) if not m]
 print(f"Number of errors : {len(errors_list)} (on a total of {len(records_rag)})")
@@ -106,23 +103,35 @@ print(f"""
   (on a total of {len(errors_list)} errors ==> proportion = {round(100 * n_errors_special_codes/n_errors, 1)}%)
 """)
 
-errors_normal_codes = [x for x in errors_list if (x["code"][:2] not in ("98", "99"))]
-errors_normal_codes_too_precise = [
-  x for x in errors_normal_codes
-  if (x["coicop_pred"] and x["coicop_pred"].startswith(x["code"]))
+codable_products = [x for x in records_rag if x["codable"]]
+len(codable_products)
+errors_amg_codable_products = [x for x in errors_list if x["codable"]]
+5
+special_codes_amg_codable_errors = [x for x in errors_list if ((x["code"][:2] in ("98","99")) and (x["codable"]))]
+n_special_codes_amg_codable_errors = len(special_codes_amg_codable_errors)
+pct_specialcodes_amg_codable_errors = n_special_codes_amg_codable_errors/len(errors_amg_codable_products)
+print(f"""
+  Number of errors due to special BDF codes (98, 99) : {n_special_codes_amg_codable_errors})
+  (on a total of {len(errors_amg_codable_products)} "codable" errors ==> proportion = {round(100 * pct_specialcodes_amg_codable_errors, 1)}%)
+""")
+
+errors_normal_codes_codable = [x for x in errors_list if (x["code"][:2] not in ("98", "99") and x["codable"])]
+len(errors_normal_codes_codable)
+errors_normal_codes_codable_too_precise = [
+  x for x in errors_normal_codes_codable
+  if (x["coicop_pred_tprune"] and x["coicop_pred_tprune"].startswith(x["code_tprune"]))
 ]
-n_errors_normal_codes = len(errors_normal_codes)
-n_errors_normal_codes_too_precise = len(errors_normal_codes_too_precise)
+len(errors_normal_codes_codable_too_precise)
 
 print(f"""
-  Number of errors due to overprecise predictions : {n_errors_normal_codes_too_precise} among normal codes (total of {n_errors_normal_codes}))
-  proportion = {round(100 * n_errors_normal_codes_too_precise/n_errors_normal_codes, 1)}%)
+  Number of errors due to overprecise predictions amongst codable errors : {len(errors_normal_codes_codable_too_precise)} among normal codes (total of {len(errors_normal_codes_codable)}))
+  proportion = {round(100 * len(errors_normal_codes_codable_too_precise)/len(errors_normal_codes_codable), 1)}%)
 """)
 
 
 
 pd.DataFrame(errors_list)[
-  ["product", "enseigne", "code", "coicop_pred","confidence", "in_retrieved", "list_retrieved_codes"]
+  ["product", "enseigne", "code_tprune", "coicop_pred_tprune","confidence", "in_retrieved", "list_retrieved_codes"]
 ].sample(5)
 
 [m for m in errors_list if m["product"]=="cadre"]

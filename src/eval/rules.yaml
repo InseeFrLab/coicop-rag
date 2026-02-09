@@ -74,6 +74,9 @@ rules:
   - pattern: "^illisible$"
     code: "98.4"
 
+  - pattern: ""
+    code: "98.4"
+
   - pattern: "^[^a-zA-Z]*$"
     code: "98.4"
 
