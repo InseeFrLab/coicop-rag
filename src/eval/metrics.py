@@ -190,6 +190,99 @@ def filter_records(
         raise ValueError(f"Unknown filter_type: {filter_type}")
 
 
+
+
+
+# def compute_hierarchical_metrics(
+#     records: List[Dict],
+#     product_col: str = "product",
+#     predicted_col: str = "coicop_pred",
+#     label_col: str = "code",
+#     confidence_col: str = "confidence",
+#     codable_col: str = "codable",
+#     parsed_col: str = "parsed",
+#     retrieved_col: str = "list_retrieved_codes",
+#     threshold: float = 0.7,
+# ) -> Dict[str, Dict]:
+#     """
+#     Compute hierarchical accuracy metrics with retrieval analysis
+    
+#     Args:
+#         records: List of dictionnaries
+#         product_col: Column name for product description
+#         predicted_col: Column name for predicted code
+#         label_col: Column name for labeled/ground truth code
+#         confidence_col: Column name for LLM confidence score
+#         codable_col: Column name for codability flag (True/False)
+#         parsed_col: Column name for parsing success flag (True/False)
+#         retrieved_col: Column name for list of retrieved codes
+    
+#     Returns:
+#         Dictionary with metrics including retrieval analysis:
+#         {
+#             'all_raw': {
+#                 'level_1': float,
+#                 'level_1_retrieval_accuracy': float,
+#                 'level_1_generation_accuracy_when_retrieved': float,
+#                 ...
+#             },
+#             'all_parsed': {...},
+#             'codable_only': {...},
+#             'parsed_and_codable': {...}
+#         }
+#     """
+    
+#     # Initialize results dictionary
+#     results = {
+#         'all_raw': {},
+#         'all_parsed': {},
+#         'codable_only': {},
+#         'parsed_and_codable': {},
+#         'threshold': {},
+#     }
+    
+#     # Define filter types
+#     filter_types = ['all_raw', 'all_parsed', 'codable_only', 'parsed_and_codable', 'threshold']
+    
+#     # Calculate metrics for each filter type
+#     for filter_type in filter_types:
+#         # Filter records according to type
+#         filtered_records = filter_records(
+#             records, 
+#             parsed_col, 
+#             codable_col, 
+#             filter_type,
+#             confidence_col,
+#             threshold
+#         )
+        
+#         # Store number of samples
+#         results[filter_type]['n_samples'] = len(filtered_records)
+        
+#         # Calculate accuracy at each hierarchical level
+#         for level in range(1, 6):
+#             (
+#                 overall_acc,
+#                 result_list,
+#                 retrieval_acc,
+#                 generation_acc_when_retrieved,
+#                 label_in_retrieved_list
+#             ) = calculate_accuracy_at_level(
+#                 filtered_records,
+#                 predicted_col,
+#                 label_col,
+#                 level,
+#                 retrieved_col
+#             )
+            
+#             # Store all metrics
+#             results[filter_type][f'level_{level}'] = overall_acc
+#             results[filter_type][f'level_{level}_retrieval_accuracy'] = retrieval_acc
+#             results[filter_type][f'level_{level}_generation_accuracy_when_retrieved'] = generation_acc_when_retrieved
+    
+#     return results
+
+
 def compute_hierarchical_metrics(
     records: List[Dict],
     product_col: str = "product",
@@ -200,6 +293,7 @@ def compute_hierarchical_metrics(
     parsed_col: str = "parsed",
     retrieved_col: str = "list_retrieved_codes",
     threshold: float = 0.7,
+    by_product_type: bool = True,
 ) -> Dict[str, Dict]:
     """
     Compute hierarchical accuracy metrics with retrieval analysis
@@ -213,37 +307,28 @@ def compute_hierarchical_metrics(
         codable_col: Column name for codability flag (True/False)
         parsed_col: Column name for parsing success flag (True/False)
         retrieved_col: Column name for list of retrieved codes
+        threshold: Confidence threshold for filtering
+        by_product_type: If True, compute metrics per product type (COICOP prefix)
     
     Returns:
-        Dictionary with metrics including retrieval analysis:
-        {
-            'all_raw': {
-                'level_1': float,
-                'level_1_retrieval_accuracy': float,
-                'level_1_generation_accuracy_when_retrieved': float,
-                ...
-            },
-            'all_parsed': {...},
-            'codable_only': {...},
-            'parsed_and_codable': {...}
-        }
+        Dictionary with metrics including retrieval analysis and optional breakdown by product type
     """
     
     # Initialize results dictionary
     results = {
-        'all_raw': {},
-        'all_parsed': {},
-        'codable_only': {},
-        'parsed_and_codable': {},
-        'threshold': {},
+        'overall': {},
+        'by_product_type': {}
     }
     
     # Define filter types
     filter_types = ['all_raw', 'all_parsed', 'codable_only', 'parsed_and_codable', 'threshold']
     
-    # Calculate metrics for each filter type
+    # Initialize overall results
     for filter_type in filter_types:
-        # Filter records according to type
+        results['overall'][filter_type] = {}
+    
+    # Calculate overall metrics for each filter type
+    for filter_type in filter_types:
         filtered_records = filter_records(
             records, 
             parsed_col, 
@@ -253,8 +338,7 @@ def compute_hierarchical_metrics(
             threshold
         )
         
-        # Store number of samples
-        results[filter_type]['n_samples'] = len(filtered_records)
+        results['overall'][filter_type]['n_samples'] = len(filtered_records)
         
         # Calculate accuracy at each hierarchical level
         for level in range(1, 6):
@@ -272,12 +356,76 @@ def compute_hierarchical_metrics(
                 retrieved_col
             )
             
-            # Store all metrics
-            results[filter_type][f'level_{level}'] = overall_acc
-            results[filter_type][f'level_{level}_retrieval_accuracy'] = retrieval_acc
-            results[filter_type][f'level_{level}_generation_accuracy_when_retrieved'] = generation_acc_when_retrieved
+            results['overall'][filter_type][f'level_{level}'] = overall_acc
+            results['overall'][filter_type][f'level_{level}_retrieval_accuracy'] = retrieval_acc
+            results['overall'][filter_type][f'level_{level}_generation_accuracy_when_retrieved'] = generation_acc_when_retrieved
+    
+    # Calculate metrics by product type if requested
+    if by_product_type:
+        # Extract unique product type prefixes (first 2 digits of COICOP code)
+        product_types = set()
+        for record in records:
+            if label_col in record and record[label_col]:
+                code = str(record[label_col])
+                if len(code) >= 2:
+                    product_types.add(code[:2])
+        
+        product_types = sorted(product_types)
+        
+        # For each product type
+        for product_type in product_types:
+            results['by_product_type'][product_type] = {}
+            
+            # Filter records for this product type
+            type_records = [
+                r for r in records 
+                if label_col in r and r[label_col] and str(r[label_col]).startswith(product_type)
+            ]
+            
+            # Calculate metrics for each filter type
+            for filter_type in filter_types:
+                results['by_product_type'][product_type][filter_type] = {}
+                
+                filtered_records = filter_records(
+                    type_records, 
+                    parsed_col, 
+                    codable_col, 
+                    filter_type,
+                    confidence_col,
+                    threshold
+                )
+                
+                results['by_product_type'][product_type][filter_type]['n_samples'] = len(filtered_records)
+                
+                # Calculate accuracy at each hierarchical level
+                for level in range(1, 6):
+                    if len(filtered_records) > 0:
+                        (
+                            overall_acc,
+                            result_list,
+                            retrieval_acc,
+                            generation_acc_when_retrieved,
+                            label_in_retrieved_list
+                        ) = calculate_accuracy_at_level(
+                            filtered_records,
+                            predicted_col,
+                            label_col,
+                            level,
+                            retrieved_col
+                        )
+                        
+                        results['by_product_type'][product_type][filter_type][f'level_{level}'] = overall_acc
+                        results['by_product_type'][product_type][filter_type][f'level_{level}_retrieval_accuracy'] = retrieval_acc
+                        results['by_product_type'][product_type][filter_type][f'level_{level}_generation_accuracy_when_retrieved'] = generation_acc_when_retrieved
+                    else:
+                        # No samples for this combination
+                        results['by_product_type'][product_type][filter_type][f'level_{level}'] = None
+                        results['by_product_type'][product_type][filter_type][f'level_{level}_retrieval_accuracy'] = None
+                        results['by_product_type'][product_type][filter_type][f'level_{level}_generation_accuracy_when_retrieved'] = None
     
     return results
+
+
 
 
 def print_metrics_report(metrics: Dict[str, Dict[str, float]]) -> None:
@@ -314,9 +462,51 @@ def print_metrics_report(metrics: Dict[str, Dict[str, float]]) -> None:
     
     print("\n" + "=" * 100)
 
+# def write_metrics_report(
+#     metrics: Dict[str, Dict[str, float]], 
+#     output_path: str
+# ) -> None:
+#     """
+#     Write a formatted report of the metrics including retrieval analysis to a text file
+    
+#     Args:
+#         metrics: Dictionary returned by compute_hierarchical_metrics
+#         output_path: Path to the output .txt file
+#     """
+#     with open(output_path, 'w') as f:
+#         f.write("=" * 100 + "\n")
+#         f.write("HIERARCHICAL CLASSIFICATION METRICS WITH RETRIEVAL ANALYSIS\n")
+#         f.write("=" * 100 + "\n")
+        
+#         for metric_type, values in metrics.items():
+#             f.write(f"\n{'─' * 100}\n")
+#             f.write(f"Metric Type: {metric_type.upper().replace('_', ' ')}\n")
+#             f.write(f"{'─' * 100}\n")
+#             f.write(f"Number of samples: {values['n_samples']}\n")
+#             f.write("\n")
+#             f.write(f"{'Level':<8} {'Overall Acc':<15} {'Retrieval Acc':<18} {'Gen Acc (Retrieved)':<20}\n")
+#             f.write(f"{'-'*8} {'-'*15} {'-'*18} {'-'*20}\n")
+            
+#             for level in range(1, 6):
+#                 overall_acc = values[f'level_{level}']
+#                 retrieval_acc = values[f'level_{level}_retrieval_accuracy']
+#                 gen_acc = values[f'level_{level}_generation_accuracy_when_retrieved']
+                
+#                 f.write(
+#                     f"{level:<8} "
+#                     f"{overall_acc:<15.4f} "
+#                     f"{retrieval_acc:<18.4f} "
+#                     f"{gen_acc:<20.4f}\n"
+#                 )
+        
+#         f.write("\n" + "=" * 100 + "\n")
+
+
 def write_metrics_report(
     metrics: Dict[str, Dict[str, float]], 
-    output_path: str
+    output_path: str,
+    include_product_types: bool = True,
+    include_comparison: bool = True
 ) -> None:
     """
     Write a formatted report of the metrics including retrieval analysis to a text file
@@ -324,13 +514,21 @@ def write_metrics_report(
     Args:
         metrics: Dictionary returned by compute_hierarchical_metrics
         output_path: Path to the output .txt file
+        include_product_types: If True, include detailed metrics for each product type
+        include_comparison: If True, include comparison tables across product types
     """
-    with open(output_path, 'w') as f:
+    with open(output_path, 'w', encoding='utf-8') as f:
         f.write("=" * 100 + "\n")
         f.write("HIERARCHICAL CLASSIFICATION METRICS WITH RETRIEVAL ANALYSIS\n")
         f.write("=" * 100 + "\n")
         
-        for metric_type, values in metrics.items():
+        # ========== OVERALL METRICS ==========
+        f.write("\n")
+        f.write("█" * 100 + "\n")
+        f.write("OVERALL METRICS\n")
+        f.write("█" * 100 + "\n")
+        
+        for metric_type, values in metrics['overall'].items():
             f.write(f"\n{'─' * 100}\n")
             f.write(f"Metric Type: {metric_type.upper().replace('_', ' ')}\n")
             f.write(f"{'─' * 100}\n")
@@ -351,8 +549,130 @@ def write_metrics_report(
                     f"{gen_acc:<20.4f}\n"
                 )
         
+        # ========== PRODUCT TYPE COMPARISON ==========
+        if include_comparison and 'by_product_type' in metrics and metrics['by_product_type']:
+            f.write("\n\n")
+            f.write("█" * 100 + "\n")
+            f.write("PRODUCT TYPE COMPARISON\n")
+            f.write("█" * 100 + "\n")
+            
+            # For each filter type
+            for filter_type in ['all_raw', 'all_parsed', 'codable_only', 'parsed_and_codable', 'threshold']:
+                f.write(f"\n{'═' * 100}\n")
+                f.write(f"Filter: {filter_type.upper().replace('_', ' ')}\n")
+                f.write(f"{'═' * 100}\n")
+                
+                # For each level
+                for level in range(1, 6):
+                    f.write(f"\n--- Level {level} ---\n")
+                    f.write(f"{'Type':<8} {'N':<8} {'Overall':<12} {'Retrieval':<12} {'Gen|Retr':<12}\n")
+                    f.write(f"{'-'*8} {'-'*8} {'-'*12} {'-'*12} {'-'*12}\n")
+                    
+                    # Collect data for sorting
+                    type_data = []
+                    for product_type in sorted(metrics['by_product_type'].keys()):
+                        if filter_type in metrics['by_product_type'][product_type]:
+                            type_metrics = metrics['by_product_type'][product_type][filter_type]
+                            n_samples = type_metrics['n_samples']
+                            acc = type_metrics.get(f'level_{level}')
+                            ret_acc = type_metrics.get(f'level_{level}_retrieval_accuracy')
+                            gen_acc = type_metrics.get(f'level_{level}_generation_accuracy_when_retrieved')
+                            
+                            if acc is not None and n_samples > 0:
+                                type_data.append({
+                                    'type': product_type,
+                                    'n': n_samples,
+                                    'acc': acc,
+                                    'ret': ret_acc,
+                                    'gen': gen_acc
+                                })
+                    
+                    # Sort by accuracy
+                    type_data.sort(key=lambda x: x['acc'], reverse=True)
+                    
+                    # Write sorted data
+                    for data in type_data:
+                        f.write(
+                            f"{data['type']:<8} "
+                            f"{data['n']:<8} "
+                            f"{data['acc']:<12.4f} "
+                            f"{data['ret']:<12.4f} "
+                            f"{data['gen']:<12.4f}\n"
+                        )
+                    
+                    if not type_data:
+                        f.write("No data available\n")
+        
+        # ========== DETAILED METRICS BY PRODUCT TYPE ==========
+        if include_product_types and 'by_product_type' in metrics and metrics['by_product_type']:
+            f.write("\n\n")
+            f.write("█" * 100 + "\n")
+            f.write("DETAILED METRICS BY PRODUCT TYPE\n")
+            f.write("█" * 100 + "\n")
+            
+            for product_type in sorted(metrics['by_product_type'].keys()):
+                f.write(f"\n\n{'▓' * 100}\n")
+                f.write(f"PRODUCT TYPE: {product_type}\n")
+                f.write(f"{'▓' * 100}\n")
+                
+                for metric_type, values in metrics['by_product_type'][product_type].items():
+                    f.write(f"\n{'─' * 100}\n")
+                    f.write(f"Metric Type: {metric_type.upper().replace('_', ' ')}\n")
+                    f.write(f"{'─' * 100}\n")
+                    f.write(f"Number of samples: {values['n_samples']}\n")
+                    
+                    if values['n_samples'] > 0:
+                        f.write("\n")
+                        f.write(f"{'Level':<8} {'Overall Acc':<15} {'Retrieval Acc':<18} {'Gen Acc (Retrieved)':<20}\n")
+                        f.write(f"{'-'*8} {'-'*15} {'-'*18} {'-'*20}\n")
+                        
+                        for level in range(1, 6):
+                            overall_acc = values.get(f'level_{level}')
+                            retrieval_acc = values.get(f'level_{level}_retrieval_accuracy')
+                            gen_acc = values.get(f'level_{level}_generation_accuracy_when_retrieved')
+                            
+                            if overall_acc is not None:
+                                f.write(
+                                    f"{level:<8} "
+                                    f"{overall_acc:<15.4f} "
+                                    f"{retrieval_acc:<18.4f} "
+                                    f"{gen_acc:<20.4f}\n"
+                                )
+                            else:
+                                f.write(f"{level:<8} {'N/A':<15} {'N/A':<18} {'N/A':<20}\n")
+                    else:
+                        f.write("\nNo samples for this metric type.\n")
+        
+        # ========== SUMMARY STATISTICS ==========
+        if 'by_product_type' in metrics and metrics['by_product_type']:
+            f.write("\n\n")
+            f.write("█" * 100 + "\n")
+            f.write("SUMMARY STATISTICS\n")
+            f.write("█" * 100 + "\n")
+            
+            # Calculate overall statistics
+            total_types = len(metrics['by_product_type'])
+            f.write(f"\nTotal product types: {total_types}\n")
+            
+            # Sample distribution
+            f.write("\n--- Sample Distribution ---\n")
+            f.write(f"{'Type':<8} {'All Raw':<12} {'All Parsed':<12} {'Codable':<12} {'P&C':<12} {'Threshold':<12}\n")
+            f.write(f"{'-'*8} {'-'*12} {'-'*12} {'-'*12} {'-'*12} {'-'*12}\n")
+            
+            for product_type in sorted(metrics['by_product_type'].keys()):
+                type_metrics = metrics['by_product_type'][product_type]
+                f.write(f"{product_type:<8} ")
+                for filter_type in ['all_raw', 'all_parsed', 'codable_only', 'parsed_and_codable', 'threshold']:
+                    if filter_type in type_metrics:
+                        n = type_metrics[filter_type]['n_samples']
+                        f.write(f"{n:<12} ")
+                    else:
+                        f.write(f"{'N/A':<12} ")
+                f.write("\n")
+        
         f.write("\n" + "=" * 100 + "\n")
-
+        f.write("END OF REPORT\n")
+        f.write("=" * 100 + "\n")
 
 def export_metrics_to_list(metrics: Dict[str, Dict[str, float]]) -> List[Dict]:
     """
@@ -478,24 +798,81 @@ def save_metrics_report_as_artifact(metrics: Dict[str, Dict[str, float]], output
 
 
 
-def flatten_metrics(metrics_hierarchical: dict) -> dict:
+# def flatten_metrics(metrics_hierarchical: dict) -> dict:
+#     """
+#     Transform a hierarchical metrics dictionary into a flat dictionary
+#     compatible with mlflow.log_metrics, using slashes for hierarchy.
+    
+#     Example of output key: "all_raw/level_1/overall_accuracy"
+#     """
+#     flattened = {}
+    
+#     for metric_type, values in metrics_hierarchical.items():
+#         # Add n_samples as a global metric for the type
+#         if 'n_samples' in values:
+#             flattened[f"{metric_type}/n_samples"] = values['n_samples']
+        
+#         for key, val in values.items():
+#             if key == 'n_samples':
+#                 continue
+#             # Every other key becomes <metric_type>/<key>
+#             flattened[f"{metric_type}/{key}"] = val
+    
+#     return flattened
+
+def flatten_metrics(
+    metrics_hierarchical: dict, 
+    include_product_types: bool = True,
+    product_type_prefix: str = "product_type"
+) -> dict:
     """
     Transform a hierarchical metrics dictionary into a flat dictionary
     compatible with mlflow.log_metrics, using slashes for hierarchy.
     
-    Example of output key: "all_raw/level_1/overall_accuracy"
+    Args:
+        metrics_hierarchical: Dictionary returned by compute_hierarchical_metrics
+        include_product_types: If True, include metrics for each product type
+        product_type_prefix: Prefix for product type metrics (default: "product_type")
+    
+    Example of output keys:
+        - "overall/all_raw/n_samples"
+        - "overall/all_raw/level_1"
+        - "overall/parsed_and_codable/level_1_retrieval_accuracy"
+        - "product_type/01/all_raw/level_1"
+        - "product_type/01/parsed_and_codable/level_3_generation_accuracy_when_retrieved"
+    
+    Returns:
+        Flat dictionary with slash-separated keys
     """
     flattened = {}
     
-    for metric_type, values in metrics_hierarchical.items():
-        # Add n_samples as a global metric for the type
-        if 'n_samples' in values:
-            flattened[f"{metric_type}/n_samples"] = values['n_samples']
-        
-        for key, val in values.items():
-            if key == 'n_samples':
-                continue
-            # Every other key becomes <metric_type>/<key>
-            flattened[f"{metric_type}/{key}"] = val
+    # ========== OVERALL METRICS ==========
+    if 'overall' in metrics_hierarchical:
+        for metric_type, values in metrics_hierarchical['overall'].items():
+            # Add n_samples
+            if 'n_samples' in values:
+                flattened[f"overall/{metric_type}/n_samples"] = values['n_samples']
+            
+            # Add all other metrics
+            for key, val in values.items():
+                if key == 'n_samples':
+                    continue
+                flattened[f"overall/{metric_type}/{key}"] = val
+    
+    # ========== PRODUCT TYPE METRICS ==========
+    if include_product_types and 'by_product_type' in metrics_hierarchical:
+        for product_type, product_metrics in metrics_hierarchical['by_product_type'].items():
+            for metric_type, values in product_metrics.items():
+                # Add n_samples
+                if 'n_samples' in values:
+                    flattened[f"{product_type_prefix}/{product_type}/{metric_type}/n_samples"] = values['n_samples']
+                
+                # Add all other metrics
+                for key, val in values.items():
+                    if key == 'n_samples':
+                        continue
+                    # Only add non-None values
+                    if val is not None:
+                        flattened[f"{product_type_prefix}/{product_type}/{metric_type}/{key}"] = val
     
     return flattened

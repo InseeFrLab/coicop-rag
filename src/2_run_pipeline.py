@@ -876,7 +876,8 @@ def main():
 
         metrics = compute_and_log_metrics(
             df_eval, 
-            df_retrieved_codes_tprune, config, 
+            df_retrieved_codes_tprune, 
+            config, 
             config['eval']['prune'],
             rules,
         )
@@ -890,7 +891,14 @@ def main():
         logger.info("GENERATING METRICS REPORT")
         logger.info("=" * 80)
         
-        write_metrics_report(metrics, "report.txt")
+        # write_metrics_report(metrics, "report.txt")
+        write_metrics_report(
+            metrics=metrics,
+            output_path="report.txt",
+            include_product_types=True,
+            include_comparison=True
+            )
+        
         mlflow.log_artifact("report.txt", artifact_path="reports")
         logger.info("✓ Metrics report saved")
         

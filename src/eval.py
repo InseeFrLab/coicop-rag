@@ -84,6 +84,52 @@ print(f"  → Regex records: {len(records_regex)}")
     retrieved_col='list_retrieved_codes'
 )
 
+# Errors for each type of product (level1)
+
+label_col = "code_tprune"
+
+product_types = set()
+for record in records_rag:
+    if label_col in record and record[label_col]:
+        code = str(record[label_col])
+        if len(code) >= 2:
+            product_types.add(code[:2])
+
+product_types = sorted(product_types)
+
+for product_type in product_types:
+    filtered_records = [
+      r for r in records 
+      if label_col in r and r[label_col] and str(r[label_col]).startswith(product_type)
+      ]
+    (
+        overall_acc,
+        result_list,
+        retrieval_acc,
+        generation_acc_when_retrieved,
+        label_in_retrieved_list
+    ) = calculate_accuracy_at_level(
+        filtered_records,
+        predicted_col="coicop_pred_tprune" if prune else "coicop_pred",
+        label_col="code_tprune" if prune else "code",
+        level=4,
+        retrieved_col='list_retrieved_codes'
+    )
+    print(f"{product_type} : {overall_acc:.2} (n = {len(filtered_records)})")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 errors_list = [x for x, m in zip(records_rag, result_list) if not m]
 print(f"Number of errors : {len(errors_list)} (on a total of {len(records_rag)})")
