@@ -495,7 +495,7 @@ def prepare_prompts(searched_products, qdrant_results_texts, qdrant_results_code
         
         if searched_product["budget"] and isinstance(searched_product["budget"], float):
             price_bloc = (
-                f"# Pour information, ce produit a coûté : {searched_product['enseigne']} euros."
+                f"# Pour information, ce produit a coûté : {round(searched_product['budget'],1)} euros."
             )
         else:
             price_bloc = None
