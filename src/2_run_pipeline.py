@@ -493,10 +493,18 @@ def prepare_prompts(searched_products, qdrant_results_texts, qdrant_results_code
         else:
             enseigne_bloc = None
         
+        if searched_product["budget"] and isinstance(searched_product["budget"], float):
+            price_bloc = (
+                f"# Pour information, ce produit a coûté : {searched_product['enseigne']} euros."
+            )
+        else:
+            price_bloc = None
+        
         messages.append(
             prompt_template.compile(
                 product=searched_product["product"],
                 enseigne_bloc=enseigne_bloc,
+                price_bloc=price_bloc,
                 proposed_codes="\n\n## ".join(qdrant_results_texts[i]),
                 list_proposed_codes=qdrant_results_codes[i]
             )
