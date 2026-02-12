@@ -27,23 +27,32 @@ result = client_llm.chat.completions.create(
 )
 
 
+
+URL_VLLM_GENERATION = "http://projet-models-hf-vllm-embed.projet-budget-famille:8000/v1"
+URL_VLLM_EMBEDDING = "http://projet-models-hf-vllm-embed-bdf.projet-budget-famille:8000/v1"
+
 from openai import OpenAI
 
-OPENAI_API_BASE_URL="http://projet-budget-famille-vllm-gpt-oss:8000/v1"
-OPENAI_API_BASE_URL="http://projet-models-hf-vllm-gpt-oss:8000/v1"
-
-client = OpenAI(
-    base_url=OPENAI_API_BASE_URL,
-    api_key="EMPTY"  # souvent ignoré par vLLM
+client_gen = OpenAI(
+    base_url=URL_VLLM_GENERATION,
+    api_key=""  # vLLM ignore généralement la clé
 )
 
-models = client.models.list()
+client_emb = OpenAI(
+    base_url=URL_VLLM_EMBEDDING,
+    api_key="EMPTY"  # vLLM ignore généralement la clé
+)
 
-response = client.chat.completions.create(
-    model="oss-120B",
+
+client_gen.models.list()
+client_emb.models.list()
+
+
+response = client_gen.chat.completions.create(
+    model="openai/gpt-oss-120b",
     messages=[
         {"role": "system", "content": "You are a helpful assistant."},
-        {"role": "user", "content": "Explique le théorème de Bayes."}
+        {"role": "user", "content": "What is Mara des bois"}
     ],
     temperature=0.7,
     max_tokens=512
