@@ -23,7 +23,7 @@ import mlflow
 import subprocess
 import random
 
-from data.parsing import extract_json_from_response
+from data.parsing import extract_json_from_response, ReponseFormat
 from data.pruning import prune_annotation_lvl4, trunc_and_prune_lvl4, _trunc_and_prune_lvl4
 from utils import merge_eval_and_retreived, apply_rules, load_rules
 from eval.metrics import (

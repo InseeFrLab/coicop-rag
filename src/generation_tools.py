@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import time
-from typing import Any
+from typing import Any, Optional
 from openai import AsyncOpenAI, APIConnectionError, APIStatusError, RateLimitError
 from tenacity import (
     retry,
@@ -11,8 +11,17 @@ from tenacity import (
     before_sleep_log,
 )
 from tqdm.asyncio import tqdm_asyncio
+from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
+
+
+
+class ReponseFormat(BaseModel):
+    codable: bool
+    coicop_pred: Optional[str] = None
+    confidence: float
+    reasons: str
 
 # ---------------------------------------------------------------------------
 # Retry predicate – does not retry on 4xx "business" errors (bad request,
@@ -36,16 +45,16 @@ def _is_retryable(exc: BaseException) -> bool:
 )
 async def _call_with_retry(client: AsyncOpenAI, config: dict, message: list) -> Any:
     """Single API call with exponential retry."""
-    if not _is_retryable:
-        pass  # tenacity checks retry_if_exception_type; can refine below
-
     try:
         return await client.chat.completions.create(
             model=config["llm"]["model_name"],
             messages=message,
             temperature=config["llm"]["temperature"],
             max_tokens=config["llm"]["max_tokens"],
-            response_format={"type": "json_object"},
+            extra_body={
+                "guided_json": ReponseFormat.model_json_schema(),
+                "guided_decoding_backend": "outlines"
+            }
         )
     except Exception as exc:
         if not _is_retryable(exc):
@@ -64,6 +73,7 @@ async def _worker(
     config: dict,
     error_policy: str,          # "raise" | "store_none" | "store_exception"
     semaphore: asyncio.Semaphore,
+    pbar: tqdm_asyncio,
 ) -> None:
     while True:
         item = await queue.get()
@@ -86,6 +96,7 @@ async def _worker(
             else:                 # "store_none"
                 results[idx] = None
         finally:
+            pbar.update(1)  # incrémente exactement quand une réponse arrive
             queue.task_done()
 
 # ---------------------------------------------------------------------------
@@ -132,42 +143,21 @@ async def generate_llm_responses_async(
     for _ in range(concurrency):
         await queue.put(None)
 
-    # Launch workers
-    workers = [
-        asyncio.create_task(
-            _worker(i, queue, results, client_gen, config, error_policy, semaphore)
-        )
-        for i in range(concurrency)
-    ]
-
-    # Progress bar
-    progress = asyncio.create_task(
-        _progress_watcher(queue, n, desc="LLM generation")
-    )
-
-    await asyncio.gather(*workers)
-    progress.cancel()
+    # La barre est créée ici et passée aux workers
+    with tqdm_asyncio(total=n, desc="LLM generation") as pbar:
+        workers = [
+            asyncio.create_task(
+                _worker(i, queue, results, client_gen, config, error_policy, semaphore, pbar)
+            )
+            for i in range(concurrency)
+        ]
+        await asyncio.gather(*workers)
 
     failed = sum(1 for r in results if r is None or isinstance(r, Exception))
     logger.info("✓ Responses: %d ok, %d failed (policy=%s)", n - failed, failed, error_policy)
 
     return results
 
-async def _progress_watcher(queue: asyncio.Queue, total: int, desc: str) -> None:
-    """Displays a tqdm progress bar without blocking the main loop."""
-    with tqdm_asyncio(total=total, desc=desc) as pbar:
-        last = total + concurrency  # initial number in the queue (with poison pills)
-        prev_size = await _safe_qsize(queue)
-        while not queue.empty():
-            await asyncio.sleep(0.2)
-            cur_size = await _safe_qsize(queue)
-            done = prev_size - cur_size
-            if done > 0:
-                pbar.update(done)
-                prev_size = cur_size
-
-async def _safe_qsize(queue: asyncio.Queue) -> int:
-    return queue.qsize()
 
 # ---------------------------------------------------------------------------
 # Synchronous wrapper (drop-in for existing code)
