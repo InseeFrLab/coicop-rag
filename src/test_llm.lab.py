@@ -25,3 +25,28 @@ result = client_llm.chat.completions.create(
     max_tokens=256,
     response_format={"type": "json_object"}
 )
+
+
+from openai import OpenAI
+
+OPENAI_API_BASE_URL="http://projet-budget-famille-vllm-gpt-oss:8000/v1"
+OPENAI_API_BASE_URL="http://projet-models-hf-vllm-gpt-oss:8000/v1"
+
+client = OpenAI(
+    base_url=OPENAI_API_BASE_URL,
+    api_key="EMPTY"  # souvent ignoré par vLLM
+)
+
+models = client.models.list()
+
+response = client.chat.completions.create(
+    model="oss-120B",
+    messages=[
+        {"role": "system", "content": "You are a helpful assistant."},
+        {"role": "user", "content": "Explique le théorème de Bayes."}
+    ],
+    temperature=0.7,
+    max_tokens=512
+)
+
+print(response.choices[0].message.content)
