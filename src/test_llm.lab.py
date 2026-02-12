@@ -45,7 +45,12 @@ client_emb = OpenAI(
 
 
 client_gen.models.list()
-client_emb.models.list()
+emb_model_name = client_emb.models.list().data[0].id
+
+response = client_emb.embeddings.create(
+        model=emb_model_name,
+        input="Ceci est une phrase de test pour vérifier l'embedding."
+    )
 
 
 response = client_gen.chat.completions.create(

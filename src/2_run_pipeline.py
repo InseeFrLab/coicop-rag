@@ -240,14 +240,70 @@ def initialize_clients(config):
     
     # LLM connection
     logger.info("  → Connecting to LLM...")
-    client_llm = OpenAI(
-        api_key=os.environ["OLLAMA_API_KEY"],
-        base_url=os.environ["OLLAMA_URL"]
+    # client_llm = OpenAI(
+    #     api_key=os.environ["OLLAMA_API_KEY"],
+    #     base_url=os.environ["OLLAMA_URL"]
+    # )
+    logger.info("  → Connecting to vLLM generation model...")
+    client_vllm_gen = OpenAI(
+        base_url=os.environ["VLLM_GENERATION_URL"],
+        api_key=os.environ["VLLM_GENERATION_API_KEY"]
     )
+
+    client_vllm_emb = OpenAI(
+        base_url=os.environ["VLLM_EMBEDDING_URL"],
+        api_key=os.environ["VLLM_EMBEDDING_API_KEY"]
+    )
+
+    try:
+        models = client_vllm_gen.models.list()
+        
+        if not models.data:
+            raise ValueError("No generation model in vLLM server.")
+
+        server_model_id = models.data[0].id
+        expected_model_id = config["llm"]["model_name"]
+
+        if server_model_id != expected_model_id:
+            raise ValueError(
+                f"Model mismatch : server='{server_model_id}' "
+                f"vs config='{expected_model_id}'"
+            )
+
+        print("✔ Valid VLLM model with config")
+
+    except KeyError as e:
+        print(f"Missing config key : {e}")
+
+    except Exception as e:
+        print(f"Error between vllm's model and config : {e}")
     
+    try:
+        models = client_vllm_emb.models.list()
+        
+        if not models.data:
+            raise ValueError("No embedding model in vLLM server.")
+
+        server_model_id = models.data[0].id
+        expected_model_id = config["embedding"]["model_name"]
+
+        if server_model_id != expected_model_id:
+            raise ValueError(
+                f"Model mismatch : server='{server_model_id}' "
+                f"vs config='{expected_model_id}'"
+            )
+
+        print("✔ Valid VLLM embedding model with config")
+
+    except KeyError as e:
+        print(f"Missing embedding config key : {e}")
+
+    except Exception as e:
+        print(f"Error between vllm's embedding model and config : {e}")
+
     logger.info("✓ All clients initialized successfully")
     
-    return con, client_qdrant, client_llm
+    return con, client_qdrant, client_vllm_gen, client_vllm_emb
 
 
 def load_prompt_template(config):
@@ -333,13 +389,13 @@ def load_and_prepare_annotations(con, config, mapping_table_lvl4, notices_raw):
     return searched_products, nature_annotation
 
 
-def generate_embeddings(searched_products, client_llm, config):
+def generate_embeddings(searched_products, client_emb, config):
     """
     Generate embeddings for all product descriptions
     
     Args:
         searched_products: List of product dictionaries
-        client_llm: OpenAI client for embedding generation
+        client_emb: OpenAI client for embedding generation
         config: Configuration dictionary
         
     Returns:
@@ -352,7 +408,7 @@ def generate_embeddings(searched_products, client_llm, config):
     search_embeddings = []
     
     for searched_product in tqdm(searched_products, desc="Generating embeddings"):
-        response = client_llm.embeddings.create(
+        response = client_emb.embeddings.create(
             model=config["embedding"]["model_name"],
             input=searched_product['product']
         )
@@ -464,13 +520,13 @@ def log_prompts_sample(messages, n, base_filename: str = "prompts/prompt"):
         mlflow.log_text(text, filename)
 
 
-def generate_llm_responses(messages, client_llm, config):
+def generate_llm_responses(messages, client_gen, config):
     """
     Generate predictions using LLM
     
     Args:
         messages: List of prompt messages
-        client_llm: OpenAI client
+        client_gen: OpenAI client for generation
         config: Configuration dictionary
         
     Returns:
@@ -484,7 +540,7 @@ def generate_llm_responses(messages, client_llm, config):
     
     for message in tqdm(messages, desc="LLM generation"):
         llm_responses.append(
-            client_llm.chat.completions.create(
+            client_gen.chat.completions.create(
                 model=config["llm"]["model_name"],
                 messages=message,
                 temperature=config["llm"]["temperature"],
@@ -781,7 +837,7 @@ def main():
         # Initialize external service connections
         # -----------------------------------------------------------------------
         
-        con, client_qdrant, client_llm = initialize_clients(config)
+        con, client_qdrant, client_vllm_gen, client_vllm_emb = initialize_clients(config)
         
         # -----------------------------------------------------------------------
         # Load prompt template
@@ -820,7 +876,7 @@ def main():
         # Step 1: Generate embeddings
         search_embeddings, embedding_dim = generate_embeddings(
             searched_products, 
-            client_llm, 
+            client_vllm_emb, 
             config
         )
         mlflow.log_param("embedding_dimension", embedding_dim)
@@ -843,7 +899,7 @@ def main():
         log_prompts_sample(messages, n=6)
         
         # Step 4: Generate LLM responses
-        llm_responses = generate_llm_responses(messages, client_llm, config)
+        llm_responses = generate_llm_responses(messages, client_vllm_gen, config)
         
         # Step 5: Parse responses
         llm_responses_parsed, n_parse_errors = parse_llm_responses(llm_responses)
