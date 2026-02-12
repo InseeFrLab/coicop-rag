@@ -31,7 +31,7 @@ from eval.metrics import (
     flatten_metrics,
     write_metrics_report,
 )
-
+from generation_tools import generate_llm_responses
 
 # ============================================================================
 # Logging Configuration
@@ -520,38 +520,38 @@ def log_prompts_sample(messages, n, base_filename: str = "prompts/prompt"):
         mlflow.log_text(text, filename)
 
 
-def generate_llm_responses(messages, client_gen, config):
-    """
-    Generate predictions using LLM
+# def generate_llm_responses(messages, client_gen, config):
+#     """
+#     Generate predictions using LLM
     
-    Args:
-        messages: List of prompt messages
-        client_gen: OpenAI client for generation
-        config: Configuration dictionary
+#     Args:
+#         messages: List of prompt messages
+#         client_gen: OpenAI client for generation
+#         config: Configuration dictionary
         
-    Returns:
-        list: List of LLM response objects
-    """
-    logger.info("=" * 80)
-    logger.info("STEP 4: LLM GENERATION")
-    logger.info("=" * 80)
+#     Returns:
+#         list: List of LLM response objects
+#     """
+#     logger.info("=" * 80)
+#     logger.info("STEP 4: LLM GENERATION")
+#     logger.info("=" * 80)
     
-    llm_responses = []
+#     llm_responses = []
     
-    for message in tqdm(messages, desc="LLM generation"):
-        llm_responses.append(
-            client_gen.chat.completions.create(
-                model=config["llm"]["model_name"],
-                messages=message,
-                temperature=config["llm"]["temperature"],
-                max_tokens=config["llm"]["max_tokens"],
-                response_format={"type": "json_object"}
-            )
-        )
+#     for message in tqdm(messages, desc="LLM generation"):
+#         llm_responses.append(
+#             client_gen.chat.completions.create(
+#                 model=config["llm"]["model_name"],
+#                 messages=message,
+#                 temperature=config["llm"]["temperature"],
+#                 max_tokens=config["llm"]["max_tokens"],
+#                 response_format={"type": "json_object"}
+#             )
+#         )
     
-    logger.info(f"✓ LLM responses generated: {len(llm_responses)}")
+#     logger.info(f"✓ LLM responses generated: {len(llm_responses)}")
     
-    return llm_responses
+#     return llm_responses
 
 
 def parse_llm_responses(llm_responses):
@@ -883,6 +883,12 @@ def main():
         
         # Split records by coding tool
         searched_products_rag = [searched_product for searched_product in searched_products if searched_product["coding_tool"] == "rag"]
+        
+        # count_None = 0
+        # for prod in searched_products_regex:
+        #     if prod["product"] is None:
+        #         count_None += 1
+        
         searched_products_regex = [searched_product for searched_product in searched_products if searched_product["coding_tool"] == "regex"]
         
         logger.info(f"  → RAG records: {len(searched_products_rag)}")
