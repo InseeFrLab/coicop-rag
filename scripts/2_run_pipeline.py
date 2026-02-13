@@ -4,9 +4,9 @@ RAG COICOP Pipeline
 ===================
 Pipeline for automatic COICOP coding using RAG (Retrieval-Augmented Generation)
 """
-
 import os
-# os.chdir("coicop-rag/src")
+# os.getcwd()
+# os.chdir("coicop-rag")
 import yaml
 import datetime
 import uuid
@@ -23,15 +23,16 @@ import mlflow
 import subprocess
 import random
 
-from data.parsing import extract_json_from_response, ReponseFormat
-from data.pruning import prune_annotation_lvl4, trunc_and_prune_lvl4, _trunc_and_prune_lvl4
-from utils import merge_eval_and_retreived, apply_rules, load_rules
-from eval.metrics import (
+from coicop_rag.data.parsing import extract_json_from_response
+from coicop_rag.data.pruning import prune_annotation_lvl4, trunc_and_prune_lvl4, _trunc_and_prune_lvl4
+
+from coicop_rag.utils import merge_eval_and_retreived, apply_rules, load_rules
+from coicop_rag.eval.metrics import (
     compute_hierarchical_metrics,
     flatten_metrics,
     write_metrics_report,
 )
-from generation_tools import generate_llm_responses
+from coicop_rag.generation_tools import generate_llm_responses
 
 # ============================================================================
 # Logging Configuration
@@ -90,7 +91,7 @@ def setup_argument_parser():
     parser.add_argument(
         '--config',
         type=str,
-        default='src/config.yaml',
+        default='config/config.yaml',
         help='Path to config YAML file'
     )
     
@@ -495,7 +496,7 @@ def prepare_prompts(searched_products, qdrant_results_texts, qdrant_results_code
         
         if searched_product["budget"] and isinstance(searched_product["budget"], float):
             price_bloc = (
-                f"# Pour information, ce produit a coûté : {round(searched_product['budget'],1)} euros."
+                f"# Pour information, ce produit a coûté : {round(searched_product['budget'], 1)} euros."
             )
         else:
             price_bloc = None
@@ -874,7 +875,7 @@ def main():
         mlflow.log_metric("num_products", len(searched_products))
 
         # Import deterministic coding rules
-        # rules = load_rules("eval/rules.yaml")
+        # rules = load_rules("config/rules.yaml")
         rules = load_rules(config["eval"]["rules_path"])
 
         # -----------------------------------------------------------------------

@@ -1,6 +1,3 @@
-#TODO : use different embedding flavours (example : without exclusions) and 
-# strategies (ex: hierachical or flat)
-
 import os
 # os.chdir("coicop-rag")
 import duckdb
@@ -10,8 +7,9 @@ import logging
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct
 from openai import OpenAI
-from data.coicop_document import CoicopDocument
-from utils import get_parents
+
+from coicop_rag.data.coicop_document import CoicopDocument
+from coicop_rag.utils import get_parents
 
 # Config
 
@@ -19,23 +17,35 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('coicop_rag.log'),
+        logging.FileHandler('vectorDB.log'),
         logging.StreamHandler()
     ]
 )
 logger = logging.getLogger(__name__)
 
-with open("src/config.yaml", "r") as f:
+with open("config/config.yaml", "r") as f:
     config = yaml.safe_load(f)
+
+strategy = config["qdrant"]["strategy"] # Basic + hierarchie (no exclusions) 
+logger.info(f"Strategy used : {strategy}")
 
 # Set clients
 
 con = duckdb.connect(database=":memory:")
 
-client = OpenAI(
-    api_key=os.environ["OLLAMA_API_KEY"],
-    base_url=os.environ["OLLAMA_URL"]
+client_gen = OpenAI(
+    base_url=os.environ["VLLM_EMBEDDING_URL"],
+    api_key=os.environ["VLLM_EMBEDDING_API_KEY"]
 )
+
+model_name = client_gen.models.list().data[0].id
+logger.info(f"Embedding model used : {model_name}")
+
+
+# client_gen = OpenAI(
+#     api_key=os.environ["OLLAMA_API_KEY"],
+#     base_url=os.environ["OLLAMA_URL"]
+# )
 
 # Qdrant config
 client_qdrant = QdrantClient(
@@ -90,7 +100,7 @@ for notice in notices:
         parents_labels=notice.get('parents_labels'),
 
     )
-    chunk = doc.to_text_chunks()
+    chunk = doc.to_text_chunks(strategy=strategy)
     documents.append({
                         "id": str(uuid.uuid4()),
                         "text": chunk["text"],
@@ -116,8 +126,8 @@ logger.info(f"Recreated Qdrant collection: {config['qdrant']['collection_name']}
 embeddings = []
 for i, document in enumerate(documents):
     try:
-        response = client.embeddings.create(
-            model=config["embedding"]["model_name"],
+        response = client_gen.embeddings.create(
+            model=model_name,
             input=document["text"]
         )
         embeddings.append(response.data[0].embedding)
