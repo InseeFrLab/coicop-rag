@@ -46,7 +46,7 @@ def setup_logging():
         handlers=[
             logging.StreamHandler(),
             logging.FileHandler(
-                f'pipeline_{datetime.datetime.now().strftime("%Y%m%d_%H%M%S")}.log'
+                f'logs/pipeline_{datetime.datetime.now().strftime("%Y%m%d_%H%M%S")}.log'
             )
         ]
     )
