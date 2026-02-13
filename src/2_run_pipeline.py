@@ -23,7 +23,7 @@ import mlflow
 import subprocess
 import random
 
-from data.parsing import extract_json_from_response
+from data.parsing import extract_json_from_response, ReponseFormat
 from data.pruning import prune_annotation_lvl4, trunc_and_prune_lvl4, _trunc_and_prune_lvl4
 from utils import merge_eval_and_retreived, apply_rules, load_rules
 from eval.metrics import (
@@ -31,7 +31,7 @@ from eval.metrics import (
     flatten_metrics,
     write_metrics_report,
 )
-
+from generation_tools import generate_llm_responses
 
 # ============================================================================
 # Logging Configuration
@@ -493,10 +493,18 @@ def prepare_prompts(searched_products, qdrant_results_texts, qdrant_results_code
         else:
             enseigne_bloc = None
         
+        if searched_product["budget"] and isinstance(searched_product["budget"], float):
+            price_bloc = (
+                f"# Pour information, ce produit a coûté : {round(searched_product['budget'],1)} euros."
+            )
+        else:
+            price_bloc = None
+        
         messages.append(
             prompt_template.compile(
                 product=searched_product["product"],
                 enseigne_bloc=enseigne_bloc,
+                price_bloc=price_bloc,
                 proposed_codes="\n\n## ".join(qdrant_results_texts[i]),
                 list_proposed_codes=qdrant_results_codes[i]
             )
@@ -520,38 +528,38 @@ def log_prompts_sample(messages, n, base_filename: str = "prompts/prompt"):
         mlflow.log_text(text, filename)
 
 
-def generate_llm_responses(messages, client_gen, config):
-    """
-    Generate predictions using LLM
+# def generate_llm_responses(messages, client_gen, config):
+#     """
+#     Generate predictions using LLM
     
-    Args:
-        messages: List of prompt messages
-        client_gen: OpenAI client for generation
-        config: Configuration dictionary
+#     Args:
+#         messages: List of prompt messages
+#         client_gen: OpenAI client for generation
+#         config: Configuration dictionary
         
-    Returns:
-        list: List of LLM response objects
-    """
-    logger.info("=" * 80)
-    logger.info("STEP 4: LLM GENERATION")
-    logger.info("=" * 80)
+#     Returns:
+#         list: List of LLM response objects
+#     """
+#     logger.info("=" * 80)
+#     logger.info("STEP 4: LLM GENERATION")
+#     logger.info("=" * 80)
     
-    llm_responses = []
+#     llm_responses = []
     
-    for message in tqdm(messages, desc="LLM generation"):
-        llm_responses.append(
-            client_gen.chat.completions.create(
-                model=config["llm"]["model_name"],
-                messages=message,
-                temperature=config["llm"]["temperature"],
-                max_tokens=config["llm"]["max_tokens"],
-                response_format={"type": "json_object"}
-            )
-        )
+#     for message in tqdm(messages, desc="LLM generation"):
+#         llm_responses.append(
+#             client_gen.chat.completions.create(
+#                 model=config["llm"]["model_name"],
+#                 messages=message,
+#                 temperature=config["llm"]["temperature"],
+#                 max_tokens=config["llm"]["max_tokens"],
+#                 response_format={"type": "json_object"}
+#             )
+#         )
     
-    logger.info(f"✓ LLM responses generated: {len(llm_responses)}")
+#     logger.info(f"✓ LLM responses generated: {len(llm_responses)}")
     
-    return llm_responses
+#     return llm_responses
 
 
 def parse_llm_responses(llm_responses):
@@ -737,25 +745,25 @@ def compute_and_log_metrics(df_eval, df_retrieved_codes, config, prune, rules):
         col_retrieved_codes_name="list_retrieved_codes",
     )
     
-    # Apply business rules
-    records = apply_rules(
-        records=records,
-        rules=rules
-    )
+    # # Apply business rules
+    # records = apply_rules(
+    #     records=records,
+    #     rules=rules
+    # )
     
-    # Split records by coding tool
-    records_rag = [record for record in records if record["coding_tool"] == "rag"]
-    records_regex = [record for record in records if record["coding_tool"] == "regex"]
+    # # Split records by coding tool
+    # records_rag = [record for record in records if record["coding_tool"] == "rag"]
+    # records_regex = [record for record in records if record["coding_tool"] == "regex"]
     
-    logger.info(f"  → RAG records: {len(records_rag)}")
-    logger.info(f"  → Regex records: {len(records_regex)}")
+    # logger.info(f"  → RAG records: {len(records_rag)}")
+    # logger.info(f"  → Regex records: {len(records_regex)}")
     
-    mlflow.log_metric("num_records_rag", len(records_rag))
-    mlflow.log_metric("num_records_regex", len(records_regex))
+    # mlflow.log_metric("num_records_rag", len(records_rag))
+    # mlflow.log_metric("num_records_regex", len(records_regex))
     
     # Compute hierarchical metrics
     metrics = compute_hierarchical_metrics(
-        records=records_rag,
+        records=records,
         threshold=config["eval"]["threshold_confidence"],
         predicted_col="coicop_pred_tprune" if prune else "coicop_pred",
         label_col="code_tprune" if prune else "code",
@@ -873,9 +881,33 @@ def main():
         # Execute main pipeline steps
         # -----------------------------------------------------------------------
         
+        # Step 0: Deterministic classification
+        
+        # Apply business rules
+        searched_products = apply_rules(
+            records=searched_products,
+            rules=rules
+        )
+        
+        # Split records by coding tool
+        searched_products_rag = [searched_product for searched_product in searched_products if searched_product["coding_tool"] == "rag"]
+        
+        # count_None = 0
+        # for prod in searched_products_regex:
+        #     if prod["product"] is None:
+        #         count_None += 1
+        
+        searched_products_regex = [searched_product for searched_product in searched_products if searched_product["coding_tool"] == "regex"]
+        
+        logger.info(f"  → RAG records: {len(searched_products_rag)}")
+        logger.info(f"  → Regex records: {len(searched_products_regex)}")
+        
+        mlflow.log_metric("num_records_rag", len(searched_products_rag))
+        mlflow.log_metric("num_records_regex", len(searched_products_regex)) 
+
         # Step 1: Generate embeddings
         search_embeddings, embedding_dim = generate_embeddings(
-            searched_products, 
+            searched_products_rag, 
             client_vllm_emb, 
             config
         )
@@ -890,7 +922,7 @@ def main():
         
         # Step 3: Prepare prompts
         messages = prepare_prompts(
-            searched_products,
+            searched_products_rag,
             qdrant_results_texts,
             qdrant_results_codes,
             prompt_template
@@ -909,14 +941,14 @@ def main():
         df_eval, df_retrieved_codes, df_retrieved_codes_tprune = (
             create_evaluation_dataframe(
                     llm_responses_parsed=llm_responses_parsed,
-                    searched_products=searched_products,
+                    searched_products=searched_products_rag,
                     qdrant_results_codes=qdrant_results_codes,
                     prune=config['eval']['prune'],
-                    mapping_table_lvl4=mapping_table_lvl4, 
+                    mapping_table_lvl4=mapping_table_lvl4,
                 )
         )
 
-        # Step 7: Export predictions
+        # Step 7: Export RAG predictions
         eval_path, retrieved_path = export_predictions(
             con,
             df_eval,
