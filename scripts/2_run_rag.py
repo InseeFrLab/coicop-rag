@@ -25,10 +25,14 @@ import random
 
 from coicop_rag.data.parsing import extract_json_from_response
 from coicop_rag.data.pruning import prune_annotation_lvl4, trunc_and_prune_lvl4, _trunc_and_prune_lvl4
-
-from coicop_rag.utils import merge_eval_and_retreived, apply_rules, load_rules
+from coicop_rag.utils import (
+    merge_eval_and_retreived,  
+    apply_rules, 
+    load_rules
+)
 from coicop_rag.eval.metrics import (
     compute_hierarchical_metrics,
+    calculate_accuracy_at_level,
     flatten_metrics,
     write_metrics_report,
 )
@@ -784,6 +788,59 @@ def compute_and_log_metrics(df_eval, df_retrieved_codes, config, prune, rules):
     return metrics
 
 
+def get_tricky_errors(
+  sample_size: int,
+  df_eval,
+  df_retrieved_codes,
+  retrieval_size,
+  code_name,
+  col_retrieved_codes_name,
+  config,
+  level,
+):
+    prune = config["eval"]["prune"]
+
+    records = merge_eval_and_retreived(
+        df_eval=df_eval,
+        retrieved_codes=df_retrieved_codes,
+        retrieval_size=config["retrieval"]["size"],
+        code_name="code_tprune" if prune else "code",
+        col_retrieved_codes_name="list_retrieved_codes",
+    )
+  
+    (
+      overall_accuracy,
+      result_list,
+      retrieval_accuracy,
+      generation_accuracy_when_retrieved,
+      label_in_retrieved_list
+    ) = calculate_accuracy_at_level(
+      records=records,
+      predicted_col="coicop_pred_tprune" if prune else "coicop_pred",
+      label_col="code_tprune" if prune else "code",
+      level=level,
+      retrieved_col='list_retrieved_codes'
+    )
+
+    errors_list = [x for x, m in zip(records, result_list) if not m]
+    codable_errors = [x for x in errors_list if x["codable"]]
+    real_errors = [x for x in codable_errors if (x["code"][:2] not in ("98", "99"))]
+
+    keys_to_keep = [
+      "product", "enseigne", "code", 
+      "coicop_pred", "confidence", "budget", 
+      "in_retrieved"
+    ]
+    sample_size = min(sample_size, len(real_errors))
+    real_errors_sample = random.sample(real_errors, sample_size)
+
+    res = []
+    for e in real_errors_sample:
+        res.append({k: e.get(k) for k in keys_to_keep})
+
+    res = pd.DataFrame(res)
+    return res
+
 # ============================================================================
 # Main Pipeline
 # ============================================================================
@@ -964,13 +1021,30 @@ def main():
         # Step 8: Compute and log metrics
 
         metrics = compute_and_log_metrics(
-            df_eval, 
-            df_retrieved_codes_tprune, 
-            config, 
+            df_eval,
+            df_retrieved_codes_tprune,
+            config,
             config['eval']['prune'],
             rules,
         )
 
+        # Step 9 : get sample of tricky errors
+
+        df_tricky_errors = get_tricky_errors(
+            sample_size=40,
+            df_eval=df_eval,
+            df_retrieved_codes=df_retrieved_codes,
+            retrieval_size=config["retrieval"]["size"],
+            code_name="code_tprune" if config["eval"]["prune"] else "code",
+            col_retrieved_codes_name="list_retrieved_codes",
+            config=config,
+            level=4,
+        )
+
+        mlflow.log_table(
+            df_tricky_errors, 
+            artifact_file="tricky_errors.json"
+        )
         
         # -----------------------------------------------------------------------
         # Generate and save metrics report

@@ -3,7 +3,7 @@
 # Environment --------------------------------------
 
 import os
-os.chdir("..")
+# os.chdir("..")
 os.getcwd()
 # os.chdir("coicop-rag")
 import re
@@ -11,7 +11,8 @@ import duckdb
 import pandas as pd
 import yaml
 
-from src.eval.metrics import (
+
+from coicop_rag.eval.metrics import (
   truncate_code, 
   compute_hierarchical_metrics, 
   calculate_accuracy_at_level, 
@@ -20,32 +21,38 @@ from src.eval.metrics import (
   print_error_analysis,
   export_metrics_to_list
 )
+
+from coicop_rag.eval.metrics import (
+  calculate_accuracy_at_level, 
+)
+
+from coicop_rag.utils import (
+  merge_eval_and_retreived, 
+  apply_rules, 
+  load_rules
+)
+
 pd.reset_option("display.max_colwidth")
 pd.set_option('display.max_rows', None)
 
-with open("src/config.yaml", "r") as f:
+with open("config/config.yaml", "r") as f:
     config = yaml.safe_load(f)
 
 threshold_confidence = config["eval"]["threshold_confidence"]
 retrieval_size = config["retrieval"]["size"]
-
+prune = config["eval"]["prune"]
 
 con = duckdb.connect(database=":memory:")
 
-
-
-s3_path_predictions = "s3://projet-budget-famille/data/rag/predictions_20260129_133952.parquet"
-s3_path_retrieved_codes = "s3://projet-budget-famille/data/rag/retrieved_codes_20260129_133952.parquet"
+s3_path_predictions = "s3://projet-budget-famille/data/rag/predictions_20260213_125554.parquet"
+s3_path_retrieved_codes = "s3://projet-budget-famille/data/rag/retrieved_codes_20260213_125554.parquet"
 query_definition = f"SELECT * FROM read_parquet('{s3_path_predictions}')"
 df_eval = con.sql(query_definition).to_df()
 
 df_retrieved_codes = con.sql(f"SELECT * FROM read_parquet('{s3_path_retrieved_codes}')").to_df()
 
 
-prune = True
-
-from src.utils import merge_eval_and_retreived, apply_rules, load_rules
-rules = load_rules(config["eval"]["rules_path"])
+# rules = load_rules(config["eval"]["rules_path"])
 
 records = merge_eval_and_retreived(
     df_eval=df_eval,
@@ -55,20 +62,8 @@ records = merge_eval_and_retreived(
     col_retrieved_codes_name="list_retrieved_codes",
 )
 
-records = apply_rules(
-    records=records,
-    rules=rules
-)
-    
-# Split records by coding tool
-records_rag = [record for record in records if record["coding_tool"] == "rag"]
-records_regex = [record for record in records if record["coding_tool"] == "regex"]
-    
-print(f"  → RAG records: {len(records_rag)}")
-print(f"  → Regex records: {len(records_regex)}")
-    
 # ----------------------------------------------
-# Error analyses at level 4  
+# Error analyses at level 4  / all raws
 
 (
     overall_accuracy,
@@ -77,7 +72,7 @@ print(f"  → Regex records: {len(records_regex)}")
     generation_accuracy_when_retrieved,
     label_in_retrieved_list
 ) = calculate_accuracy_at_level(
-    records=records_rag,
+    records=records,
     predicted_col="coicop_pred_tprune" if prune else "coicop_pred",
     label_col="code_tprune" if prune else "code",
     level=4,
@@ -183,6 +178,64 @@ pd.DataFrame(errors_list)[
 [m for m in errors_list if m["product"]=="cadre"]
 
 
+# Sample des erreurs de niveau 4 parmi les codables
+
+
+import merge_eval_and_retreived, calculate_accuracy_at_level
+import random
+
+def get_tricky_errors(
+  sample_size: int,
+  df_eval=df_eval,
+  retrieved_codes=df_retrieved_codes,
+  retrieval_size=config["retrieval"]["size"],
+  code_name="code_tprune" if prune else "code",
+  col_retrieved_codes_name="list_retrieved_codes",
+  prune=config["eval"]["prune"],
+  level=4,
+
+):
+
+    records = merge_eval_and_retreived(
+        df_eval=df_eval,
+        retrieved_codes=df_retrieved_codes,
+        retrieval_size=config["retrieval"]["size"],
+        code_name="code_tprune" if prune else "code",
+        col_retrieved_codes_name="list_retrieved_codes",
+    )
+  
+    (
+      overall_accuracy,
+      result_list,
+      retrieval_accuracy,
+      generation_accuracy_when_retrieved,
+      label_in_retrieved_list
+    ) = calculate_accuracy_at_level(
+      records=records,
+      predicted_col="coicop_pred_tprune" if prune else "coicop_pred",
+      label_col="code_tprune" if prune else "code",
+      level=level,
+      retrieved_col='list_retrieved_codes'
+    )
+
+    errors_list = [x for x, m in zip(records, result_list) if not m]
+    codable_errors = [x for x in errors_list if x["codable"]]
+    real_errors = [x for x in codable_errors if (x["code"][:2] not in ("98", "99"))]
+
+    keys_to_keep = [
+      "product", "enseigne", "code", 
+      "coicop_pred", "confidence", "budget", 
+      "in_retrieved"
+    ]
+    sample_size = max(sample_size, len(real_errors))
+    real_errors_sample = random.sample(real_errors, sample_size)
+
+    res = []
+    for e in real_errors_sample:
+        res.append({k: e.get(k) for k in keys_to_keep})
+
+    res = pd.DataFrame(res)
+    return res
 # ----------------------------------------------
 
 df_eval.columns
