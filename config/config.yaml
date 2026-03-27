@@ -24,8 +24,18 @@ coicop:
   path_mapping_lvl4: "s3://projet-budget-famille/data/coicop-2018_envoi_rmes_20251022_mapping_prunning_lvl4.parquet"
 
 annotations:
-  s3_path: "s3://projet-budget-famille/data/output-annotation-consolidated-2026-01-05/raw.parquet"
+  s3_path: "s3://projet-budget-famille/data/output-annotation-consolidated/annotations-consolidated-2026-03-26/raw_test.parquet"
   sample_size: 128
+  features:
+    - id
+    - l_pr_product
+    - annee
+    - code
+    - coicop
+    - shop
+    - shop_type_name
+    - budget
+    - n_obs
   nature: manual_from_books
 
 predictions:
@@ -38,4 +48,4 @@ eval:
   prune: true
 
 mlflow:
-  experiment_name: rag-coicop
+  experiment_name: test

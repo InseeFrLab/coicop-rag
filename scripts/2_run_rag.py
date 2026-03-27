@@ -358,7 +358,9 @@ def load_and_prepare_annotations(con, config, mapping_table_lvl4, notices_raw):
     if nature_annotation:
         annotations = annotations.loc[annotations[nature_annotation]]
     
-    annotations = annotations[["product", "code", "coicop", "enseigne", "budget"]]
+    annotations = annotations[
+        config["annotations"]["nature"]["features"]
+    ]
     
     logger.info(
         f"✓ Annotations loaded: {len(annotations)} rows "
@@ -374,10 +376,8 @@ def load_and_prepare_annotations(con, config, mapping_table_lvl4, notices_raw):
         notices_raw
     )
     
-    # Add unique IDs
     searched_products = (
         annotations
-        .assign(id=lambda x: [str(uuid.uuid4()) for _ in range(len(x))])
         .to_dict(orient="records")
     )
     
