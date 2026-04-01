@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 class ReponseFormat(BaseModel):
     codable: bool
-    coicop_pred: Optional[str] = None
+    code_predict: Optional[str] = None
     confidence: float
     reasons: str
 

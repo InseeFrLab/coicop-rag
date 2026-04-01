@@ -196,7 +196,7 @@ def filter_records(
 # def compute_hierarchical_metrics(
 #     records: List[Dict],
 #     product_col: str = "product",
-#     predicted_col: str = "coicop_pred",
+#     predicted_col: str = "code_predict",
 #     label_col: str = "code",
 #     confidence_col: str = "confidence",
 #     codable_col: str = "codable",
@@ -286,7 +286,7 @@ def filter_records(
 def compute_hierarchical_metrics(
     records: List[Dict],
     product_col: str = "product",
-    predicted_col: str = "coicop_pred",
+    predicted_col: str = "code_predict",
     label_col: str = "code",
     confidence_col: str = "confidence",
     codable_col: str = "codable",

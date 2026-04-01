@@ -862,8 +862,8 @@ def create_evaluation_dataframe(
         row = pred | annotation
         if prune:
             # Trunc and prune LLM's prediction
-            row["coicop_pred_tprune"] = _trunc_and_prune_lvl4(
-                code=row.get("coicop_pred", None), # None if not parsed
+            row["code_predict_tprune"] = _trunc_and_prune_lvl4(
+                code=row.get("code_predict", None), # None if not parsed
                 mapping_table_lvl4=mapping_table_lvl4
             )
             # Trunc and prune annotations
@@ -874,7 +874,8 @@ def create_evaluation_dataframe(
         rows.append(row)
     
     df_eval = pd.DataFrame(rows)
-    
+    df_eval["method"] = "rag-notices"
+
     if prune: 
         qdrant_results_codes_tprune = [
             [_trunc_and_prune_lvl4(code, mapping_table_lvl4) for code in sublist]
@@ -1004,7 +1005,7 @@ def compute_and_log_metrics(df_eval, df_retrieved_codes, config, prune, rules):
     metrics = compute_hierarchical_metrics(
         records=records,
         threshold=config["eval"]["threshold_confidence"],
-        predicted_col="coicop_pred_tprune" if prune else "coicop_pred",
+        predicted_col="code_predict_tprune" if prune else "code_predict",
         label_col="code_tprune" if prune else "code",
         retrieved_col="list_retrieved_codes"
     )
@@ -1015,7 +1016,7 @@ def compute_and_log_metrics(df_eval, df_retrieved_codes, config, prune, rules):
     logger.info("Logging metrics to MLflow:")
     for metric_name, metric_value in metrics_mlflow.items():
         mlflow.log_metric(metric_name, metric_value)
-        logger.info(f"  → {metric_name}: {metric_value:.4f}")
+        #logger.info(f"  → {metric_name}: {metric_value:.4f}")
     
     logger.info("✓ Metrics computed and logged")
     
@@ -1050,7 +1051,7 @@ def get_tricky_errors(
       label_in_retrieved_list
     ) = calculate_accuracy_at_level(
       records=records,
-      predicted_col="coicop_pred_tprune" if prune else "coicop_pred",
+      predicted_col="code_predict_tprune" if prune else "code_predict",
       label_col="code_tprune" if prune else "code",
       level=level,
       retrieved_col='list_retrieved_codes'
@@ -1062,7 +1063,7 @@ def get_tricky_errors(
 
     keys_to_keep = [
       "l_pr_product", "shop", "code", 
-      "coicop_pred", "confidence", "budget", 
+      "code_predict", "confidence", "budget", 
       "in_retrieved"
     ]
     sample_size = min(sample_size, len(real_errors))
