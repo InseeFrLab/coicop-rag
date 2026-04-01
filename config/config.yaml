@@ -14,7 +14,7 @@ retrieval:
 llm:
   prompt_name: prompt-multi-level
   prompt_version: "9"
-  model_name: openai/gpt-oss-120b
+  model_name: google/gemma-3-27b-it
   temperature: 0.1
   max_tokens: 2048
 
@@ -36,7 +36,7 @@ annotations:
     - shop_type_name
     - budget
     - n_obs
-  nature: manual_from_books
+  nature: manual_from_book
 
 predictions:
   s3_path: "s3://projet-budget-famille/data/rag/predictions_{timestamp}.parquet"

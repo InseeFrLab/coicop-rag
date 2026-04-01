@@ -38,6 +38,246 @@ from coicop_rag.eval.metrics import (
 )
 from coicop_rag.generation_tools import generate_llm_responses
 
+
+
+# ============================================================================
+# Main Pipeline
+# ============================================================================
+
+def main():
+    """Main pipeline execution"""
+    
+    logger.info("=" * 80)
+    logger.info("STARTING RAG COICOP PIPELINE")
+    logger.info("=" * 80)
+    
+    # ---------------------------------------------------------------------------
+    # Parse arguments and load configuration
+    # ---------------------------------------------------------------------------
+    
+    parser = setup_argument_parser()
+    args = parser.parse_args()
+    
+    # config = load_config("config.yaml")
+    config = load_config(args.config)
+    config = merge_config_with_args(config, args)
+    
+    logger.info(f"✓ Configuration loaded: {config['llm']['model_name']}")
+
+    # Generate timestamp for this run
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    # ---------------------------------------------------------------------------
+    # Setup MLflow tracking
+    # ---------------------------------------------------------------------------
+    
+    logger.info("Setting up MLflow experiment tracking...")
+    mlflow.set_tracking_uri(os.environ["MLFLOW_TRACKING_URI"])
+    mlflow.set_experiment(config["mlflow"]["experiment_name"])
+    
+    # Start MLflow run
+    with mlflow.start_run(run_name=f"run_{timestamp}"):
+        logger.info(f"✓ MLflow run started: {mlflow.active_run().info.run_id}")
+        mlflow.set_tag("git.commit", get_git_commit_hash())
+        mlflow.set_tag("git.branch", get_git_branch())
+        mlflow.set_tag("git.repo", "https://github.com/InseeFrLab/coicop-rag")
+
+        
+        # Log parameters
+        mlflow.log_params({
+            "collection_name": config['qdrant']['collection_name'],
+            "model_name": config["llm"]["model_name"],
+            "embedding_model": config["embedding"]["model_name"],
+            "temperature": config["llm"]["temperature"],
+            "max_tokens": config["llm"]["max_tokens"],
+            "retrieval_size": config["retrieval"]["size"],
+            "sample_size": config["annotations"]["sample_size"],
+            "prompt_name": config["llm"]["prompt_name"],
+            "prompt_version": config["llm"]["prompt_version"],
+            "threshold_confidence": config["eval"]["threshold_confidence"],
+            "prune": config['eval']['prune']
+        })
+        
+        # -----------------------------------------------------------------------
+        # Initialize external service connections
+        # -----------------------------------------------------------------------
+        
+        con, client_qdrant, client_vllm_gen, client_vllm_emb = initialize_clients(config)
+        
+        # -----------------------------------------------------------------------
+        # Load prompt template
+        # -----------------------------------------------------------------------
+        
+        prompt_template = load_prompt_template(config)
+        
+        # -----------------------------------------------------------------------
+        # Load and prepare annotations
+        # -----------------------------------------------------------------------
+        
+        # Load mapping tables for pruning
+        mapping_table_lvl4 = con.sql(
+            f"SELECT * FROM read_parquet('{config['coicop']['path_mapping_lvl4']}')"
+        ).to_df()
+        
+        notices_raw = con.sql(
+            f"SELECT * FROM read_csv('{config['coicop']['path_raw']}')"
+        ).to_df()
+        
+        # Import products to code (annotated)
+        mlflow.log_param("input_data_path", config['annotations']['s3_path'])
+        searched_products, nature_annotation = load_and_prepare_annotations(con, config, mapping_table_lvl4, notices_raw)
+    
+        mlflow.log_param("nature_annotation", nature_annotation)
+        mlflow.log_metric("num_products", len(searched_products))
+
+        # Import deterministic coding rules
+        # rules = load_rules("config/rules.yaml")
+        rules = load_rules(config["eval"]["rules_path"])
+
+        # -----------------------------------------------------------------------
+        # Execute main pipeline steps
+        # -----------------------------------------------------------------------
+        
+        # Step 0: Deterministic classification
+        
+        # Apply business rules
+        searched_products = apply_rules(
+            records=searched_products,
+            rules=rules
+        )
+        
+        # Split records by coding tool
+        searched_products_rag = [searched_product for searched_product in searched_products if searched_product["coding_tool"] == "rag"]
+        
+        # count_None = 0
+        # for prod in searched_products_regex:
+        #     if prod["l_pr_product"] is None:
+        #         count_None += 1
+        
+        searched_products_regex = [searched_product for searched_product in searched_products if searched_product["coding_tool"] == "regex"]
+        
+        logger.info(f"  → RAG records: {len(searched_products_rag)}")
+        logger.info(f"  → Regex records: {len(searched_products_regex)}")
+        
+        mlflow.log_metric("num_records_rag", len(searched_products_rag))
+        mlflow.log_metric("num_records_regex", len(searched_products_regex)) 
+
+        # Step 1: Generate embeddings
+        search_embeddings, embedding_dim = generate_embeddings(
+            searched_products_rag, 
+            client_vllm_emb, 
+            config
+        )
+        mlflow.log_param("embedding_dimension", embedding_dim)
+        
+        # Step 2: Vector search
+        qdrant_results_texts, qdrant_results_codes = perform_vector_search(
+            search_embeddings,
+            client_qdrant,
+            config
+        )
+        
+        # Step 3: Prepare prompts
+        messages = prepare_prompts(
+            searched_products_rag,
+            qdrant_results_texts,
+            qdrant_results_codes,
+            prompt_template
+        )
+
+        log_prompts_sample(messages, n=6)
+        
+        # Step 4: Generate LLM responses
+        llm_responses = generate_llm_responses(messages, client_vllm_gen, config)
+        
+        # Step 5: Parse responses
+        llm_responses_parsed, n_parse_errors = parse_llm_responses(llm_responses)
+        mlflow.log_metric("parse_errors", n_parse_errors)
+        
+        # Step 6: Create evaluation dataset
+        df_eval, df_retrieved_codes, df_retrieved_codes_tprune = (
+            create_evaluation_dataframe(
+                    llm_responses_parsed=llm_responses_parsed,
+                    searched_products=searched_products_rag,
+                    qdrant_results_codes=qdrant_results_codes,
+                    prune=config['eval']['prune'],
+                    mapping_table_lvl4=mapping_table_lvl4,
+                )
+        )
+
+        # Step 7: Export RAG predictions
+        eval_path, retrieved_path = export_predictions(
+            con,
+            df_eval,
+            df_retrieved_codes,
+            config,
+            timestamp
+        )
+        
+        mlflow.log_param("eval_output_path", eval_path)
+        mlflow.log_param("retrieved_codes_output_path", retrieved_path)
+        
+        # Step 8: Compute and log metrics
+
+        metrics = compute_and_log_metrics(
+            df_eval,
+            df_retrieved_codes_tprune,
+            config,
+            config['eval']['prune'],
+            rules,
+        )
+
+        # Step 9 : get sample of tricky errors
+
+        df_tricky_errors = get_tricky_errors(
+            sample_size=40,
+            df_eval=df_eval,
+            df_retrieved_codes=df_retrieved_codes,
+            retrieval_size=config["retrieval"]["size"],
+            code_name="code_tprune" if config["eval"]["prune"] else "code",
+            col_retrieved_codes_name="list_retrieved_codes",
+            config=config,
+            level=4,
+        )
+
+        mlflow.log_table(
+            df_tricky_errors, 
+            artifact_file="tricky_errors.json"
+        )
+        
+        # -----------------------------------------------------------------------
+        # Generate and save metrics report
+        # -----------------------------------------------------------------------
+        
+        logger.info("=" * 80)
+        logger.info("GENERATING METRICS REPORT")
+        logger.info("=" * 80)
+        
+        # write_metrics_report(metrics, "report.txt")
+        write_metrics_report(
+            metrics=metrics,
+            output_path="report.txt",
+            include_product_types=True,
+            include_comparison=True
+            )
+        
+        mlflow.log_artifact("report.txt", artifact_path="reports")
+        logger.info("✓ Metrics report saved")
+        
+        # Log config as artifact
+        mlflow.log_dict(config, "config.yaml")
+        
+        # -----------------------------------------------------------------------
+        # Pipeline completion
+        # -----------------------------------------------------------------------
+        
+        logger.info("=" * 80)
+        logger.info("PIPELINE COMPLETED SUCCESSFULLY!")
+        logger.info(f"MLflow run ID: {mlflow.active_run().info.run_id}")
+        logger.info("=" * 80)
+
+
+
 # ============================================================================
 # Logging Configuration
 # ============================================================================
@@ -356,10 +596,10 @@ def load_and_prepare_annotations(con, config, mapping_table_lvl4, notices_raw):
     # Filter by annotation type if specified
     nature_annotation = config["annotations"]["nature"]
     if nature_annotation:
-        annotations = annotations.loc[annotations[nature_annotation]]
+        annotations = annotations.loc[annotations["source"] == nature_annotation]
     
     annotations = annotations[
-        config["annotations"]["nature"]["features"]
+        config["annotations"]["features"]
     ]
     
     logger.info(
@@ -371,8 +611,8 @@ def load_and_prepare_annotations(con, config, mapping_table_lvl4, notices_raw):
     # Prune annotations (remove children codes in linear relation)
     logger.info("Pruning annotations...")
     annotations = prune_annotation_lvl4(
-        annotations, 
-        mapping_table_lvl4, 
+        annotations,
+        mapping_table_lvl4,
         notices_raw
     )
     
@@ -415,7 +655,7 @@ def generate_embeddings(searched_products, client_emb, config):
     for searched_product in tqdm(searched_products, desc="Generating embeddings"):
         response = client_emb.embeddings.create(
             model=config["embedding"]["model_name"],
-            input=searched_product['product']
+            input=searched_product['l_pr_product']
         )
         search_embeddings.append(response.data[0].embedding)
     
@@ -490,10 +730,10 @@ def prepare_prompts(searched_products, qdrant_results_texts, qdrant_results_code
     
     for i, searched_product in enumerate(searched_products):
         # Include store information if available
-        if searched_product["enseigne"]:
+        if searched_product["shop"]:
             enseigne_bloc = (
                 f"# Pour information, ce produit a été acheté dans cette enseigne : "
-                f"{searched_product['enseigne']}"
+                f"{searched_product['shop']}"
             )
         else:
             enseigne_bloc = None
@@ -507,7 +747,7 @@ def prepare_prompts(searched_products, qdrant_results_texts, qdrant_results_code
         
         messages.append(
             prompt_template.compile(
-                product=searched_product["product"],
+                product=searched_product["l_pr_product"],
                 enseigne_bloc=enseigne_bloc,
                 price_bloc=price_bloc,
                 proposed_codes="\n\n## ".join(qdrant_results_texts[i]),
@@ -827,7 +1067,7 @@ def get_tricky_errors(
     real_errors = [x for x in codable_errors if (x["code"][:2] not in ("98", "99"))]
 
     keys_to_keep = [
-      "product", "enseigne", "code", 
+      "l_pr_product", "shop", "code", 
       "coicop_pred", "confidence", "budget", 
       "in_retrieved"
     ]
@@ -841,246 +1081,12 @@ def get_tricky_errors(
     res = pd.DataFrame(res)
     return res
 
-# ============================================================================
-# Main Pipeline
-# ============================================================================
-
-def main():
-    """Main pipeline execution"""
-    
-    logger.info("=" * 80)
-    logger.info("STARTING RAG COICOP PIPELINE")
-    logger.info("=" * 80)
-    
-    # ---------------------------------------------------------------------------
-    # Parse arguments and load configuration
-    # ---------------------------------------------------------------------------
-    
-    parser = setup_argument_parser()
-    args = parser.parse_args()
-    
-    # config = load_config("config.yaml")
-    config = load_config(args.config)
-    config = merge_config_with_args(config, args)
-    
-    logger.info(f"✓ Configuration loaded: {config['llm']['model_name']}")
-
-    # Generate timestamp for this run
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    
-    # ---------------------------------------------------------------------------
-    # Setup MLflow tracking
-    # ---------------------------------------------------------------------------
-    
-    logger.info("Setting up MLflow experiment tracking...")
-    mlflow.set_tracking_uri(os.environ["MLFLOW_TRACKING_URI"])
-    mlflow.set_experiment(config["mlflow"]["experiment_name"])
-    
-    # Start MLflow run
-    with mlflow.start_run(run_name=f"run_{timestamp}"):
-        logger.info(f"✓ MLflow run started: {mlflow.active_run().info.run_id}")
-        mlflow.set_tag("git.commit", get_git_commit_hash())
-        mlflow.set_tag("git.branch", get_git_branch())
-        mlflow.set_tag("git.repo", "https://github.com/InseeFrLab/coicop-rag")
-
-        
-        # Log parameters
-        mlflow.log_params({
-            "collection_name": config['qdrant']['collection_name'],
-            "model_name": config["llm"]["model_name"],
-            "embedding_model": config["embedding"]["model_name"],
-            "temperature": config["llm"]["temperature"],
-            "max_tokens": config["llm"]["max_tokens"],
-            "retrieval_size": config["retrieval"]["size"],
-            "sample_size": config["annotations"]["sample_size"],
-            "prompt_name": config["llm"]["prompt_name"],
-            "prompt_version": config["llm"]["prompt_version"],
-            "threshold_confidence": config["eval"]["threshold_confidence"],
-            "prune": config['eval']['prune']
-        })
-        
-        # -----------------------------------------------------------------------
-        # Initialize external service connections
-        # -----------------------------------------------------------------------
-        
-        con, client_qdrant, client_vllm_gen, client_vllm_emb = initialize_clients(config)
-        
-        # -----------------------------------------------------------------------
-        # Load prompt template
-        # -----------------------------------------------------------------------
-        
-        prompt_template = load_prompt_template(config)
-        
-        # -----------------------------------------------------------------------
-        # Load and prepare annotations
-        # -----------------------------------------------------------------------
-        
-        # Load mapping tables for pruning
-        mapping_table_lvl4 = con.sql(
-            f"SELECT * FROM read_parquet('{config['coicop']['path_mapping_lvl4']}')"
-        ).to_df()
-        
-        notices_raw = con.sql(
-            f"SELECT * FROM read_csv('{config['coicop']['path_raw']}')"
-        ).to_df()
-        
-        # Import products to code (annotated)
-        mlflow.log_param("input_data_path", config['annotations']['s3_path'])
-        searched_products, nature_annotation = load_and_prepare_annotations(con, config, mapping_table_lvl4, notices_raw)
-    
-        mlflow.log_param("nature_annotation", nature_annotation)
-        mlflow.log_metric("num_products", len(searched_products))
-
-        # Import deterministic coding rules
-        # rules = load_rules("config/rules.yaml")
-        rules = load_rules(config["eval"]["rules_path"])
-
-        # -----------------------------------------------------------------------
-        # Execute main pipeline steps
-        # -----------------------------------------------------------------------
-        
-        # Step 0: Deterministic classification
-        
-        # Apply business rules
-        searched_products = apply_rules(
-            records=searched_products,
-            rules=rules
-        )
-        
-        # Split records by coding tool
-        searched_products_rag = [searched_product for searched_product in searched_products if searched_product["coding_tool"] == "rag"]
-        
-        # count_None = 0
-        # for prod in searched_products_regex:
-        #     if prod["product"] is None:
-        #         count_None += 1
-        
-        searched_products_regex = [searched_product for searched_product in searched_products if searched_product["coding_tool"] == "regex"]
-        
-        logger.info(f"  → RAG records: {len(searched_products_rag)}")
-        logger.info(f"  → Regex records: {len(searched_products_regex)}")
-        
-        mlflow.log_metric("num_records_rag", len(searched_products_rag))
-        mlflow.log_metric("num_records_regex", len(searched_products_regex)) 
-
-        # Step 1: Generate embeddings
-        search_embeddings, embedding_dim = generate_embeddings(
-            searched_products_rag, 
-            client_vllm_emb, 
-            config
-        )
-        mlflow.log_param("embedding_dimension", embedding_dim)
-        
-        # Step 2: Vector search
-        qdrant_results_texts, qdrant_results_codes = perform_vector_search(
-            search_embeddings,
-            client_qdrant,
-            config
-        )
-        
-        # Step 3: Prepare prompts
-        messages = prepare_prompts(
-            searched_products_rag,
-            qdrant_results_texts,
-            qdrant_results_codes,
-            prompt_template
-        )
-
-        log_prompts_sample(messages, n=6)
-        
-        # Step 4: Generate LLM responses
-        llm_responses = generate_llm_responses(messages, client_vllm_gen, config)
-        
-        # Step 5: Parse responses
-        llm_responses_parsed, n_parse_errors = parse_llm_responses(llm_responses)
-        mlflow.log_metric("parse_errors", n_parse_errors)
-        
-        # Step 6: Create evaluation dataset
-        df_eval, df_retrieved_codes, df_retrieved_codes_tprune = (
-            create_evaluation_dataframe(
-                    llm_responses_parsed=llm_responses_parsed,
-                    searched_products=searched_products_rag,
-                    qdrant_results_codes=qdrant_results_codes,
-                    prune=config['eval']['prune'],
-                    mapping_table_lvl4=mapping_table_lvl4,
-                )
-        )
-
-        # Step 7: Export RAG predictions
-        eval_path, retrieved_path = export_predictions(
-            con,
-            df_eval,
-            df_retrieved_codes,
-            config,
-            timestamp
-        )
-        
-        mlflow.log_param("eval_output_path", eval_path)
-        mlflow.log_param("retrieved_codes_output_path", retrieved_path)
-        
-        # Step 8: Compute and log metrics
-
-        metrics = compute_and_log_metrics(
-            df_eval,
-            df_retrieved_codes_tprune,
-            config,
-            config['eval']['prune'],
-            rules,
-        )
-
-        # Step 9 : get sample of tricky errors
-
-        df_tricky_errors = get_tricky_errors(
-            sample_size=40,
-            df_eval=df_eval,
-            df_retrieved_codes=df_retrieved_codes,
-            retrieval_size=config["retrieval"]["size"],
-            code_name="code_tprune" if config["eval"]["prune"] else "code",
-            col_retrieved_codes_name="list_retrieved_codes",
-            config=config,
-            level=4,
-        )
-
-        mlflow.log_table(
-            df_tricky_errors, 
-            artifact_file="tricky_errors.json"
-        )
-        
-        # -----------------------------------------------------------------------
-        # Generate and save metrics report
-        # -----------------------------------------------------------------------
-        
-        logger.info("=" * 80)
-        logger.info("GENERATING METRICS REPORT")
-        logger.info("=" * 80)
-        
-        # write_metrics_report(metrics, "report.txt")
-        write_metrics_report(
-            metrics=metrics,
-            output_path="report.txt",
-            include_product_types=True,
-            include_comparison=True
-            )
-        
-        mlflow.log_artifact("report.txt", artifact_path="reports")
-        logger.info("✓ Metrics report saved")
-        
-        # Log config as artifact
-        mlflow.log_dict(config, "config.yaml")
-        
-        # -----------------------------------------------------------------------
-        # Pipeline completion
-        # -----------------------------------------------------------------------
-        
-        logger.info("=" * 80)
-        logger.info("PIPELINE COMPLETED SUCCESSFULLY!")
-        logger.info(f"MLflow run ID: {mlflow.active_run().info.run_id}")
-        logger.info("=" * 80)
 
 
 # ============================================================================
 # Entry Point
 # ============================================================================
+
 
 if __name__ == "__main__":
     try:

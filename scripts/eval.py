@@ -172,7 +172,7 @@ print(f"""
 
 
 pd.DataFrame(errors_list)[
-  ["product", "enseigne", "code_tprune", "coicop_pred_tprune","confidence", "in_retrieved", "list_retrieved_codes"]
+  ["product", "shop", "code_tprune", "coicop_pred_tprune","confidence", "in_retrieved", "list_retrieved_codes"]
 ].sample(5)
 
 [m for m in errors_list if m["product"]=="cadre"]
@@ -223,7 +223,7 @@ def get_tricky_errors(
     real_errors = [x for x in codable_errors if (x["code"][:2] not in ("98", "99"))]
 
     keys_to_keep = [
-      "product", "enseigne", "code", 
+      "product", "shop", "code", 
       "coicop_pred", "confidence", "budget", 
       "in_retrieved"
     ]
@@ -290,7 +290,7 @@ print(
         df_eval
           .loc[
             ~df_eval["result"], 
-            ["product", "enseigne", "code", "coicop_pred","confidence"]
+            ["product", "shop", "code", "coicop_pred","confidence"]
             ]
           .sort_values(by="confidence", ascending=False)
           .head(20)
@@ -300,7 +300,7 @@ print(
         df_eval
           .loc[
             ~df_eval["result"], 
-            ["product", "enseigne", "code", "coicop_pred","confidence"]
+            ["product", "shop", "code", "coicop_pred","confidence"]
             ]
           .sample(20)
 )

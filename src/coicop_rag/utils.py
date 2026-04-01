@@ -67,7 +67,7 @@ def apply_rules(
     records_out = records.copy()
     
     for entry in records_out:
-        product = normalize(entry["product"])
+        product = normalize(entry["l_pr_product"])
         tool, code = predict_code(product, rules)
         entry["coding_tool"] = tool
         if code is not None:

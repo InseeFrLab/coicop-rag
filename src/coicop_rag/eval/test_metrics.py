@@ -6,7 +6,7 @@ from eval.metrics import calculate_accuracy_at_level
 records_test = [
     # Case 1: Perfect match - LLM correct, label in retrieved codes
     {
-        'product': 'Pain complet bio',
+        'l_pr_product': 'Pain complet bio',
         'coicop_pred': '01.1.1.1.2',
         'code': '01.1.1.1.2',
         'list_retrieved_codes': [
@@ -22,7 +22,7 @@ records_test = [
     # Case 2: LLM correct at level 4, but full codes differ (truncate helps)
     # Label NOT in retrieved codes, but LLM guesses correctly at level 4
     {
-        'product': 'Chocolat noir 70%',
+        'l_pr_product': 'Chocolat noir 70%',
         'coicop_pred': '01.1.8.3.5',  # Level 4: 01.1.8.3
         'code': '01.1.8.3.7',          # Level 4: 01.1.8.3 (same!)
         'list_retrieved_codes': [
@@ -38,7 +38,7 @@ records_test = [
     
     # Case 3: LLM wrong even though correct code is in retrieved codes
     {
-        'product': 'Vin rouge Bordeaux',
+        'l_pr_product': 'Vin rouge Bordeaux',
         'coicop_pred': '02.1.2.0.0',  # Wrong choice
         'code': '02.1.1.1.0',          # Correct code
         'list_retrieved_codes': [
@@ -53,7 +53,7 @@ records_test = [
     
     # Case 4: LLM wrong, label not in retrieved codes (retriever failed)
     {
-        'product': 'Smartphone Samsung',
+        'l_pr_product': 'Smartphone Samsung',
         'coicop_pred': '08.2.1.0.0',
         'code': '08.2.0.1.0',
         'list_retrieved_codes': [
@@ -70,7 +70,7 @@ records_test = [
     # Case 5: LLM correct at level 4 thanks to truncate, different level 5
     # Label IS in retrieved codes (at full precision)
     {
-        'product': 'Café arabica moulu',
+        'l_pr_product': 'Café arabica moulu',
         'coicop_pred': '01.2.1.0.3',  # Level 4: 01.2.1.0
         'code': '01.2.1.0.1',          # Level 4: 01.2.1.0 (match!)
         'list_retrieved_codes': [
@@ -85,7 +85,7 @@ records_test = [
     
     # Case 6: LLM correct, label in retrieved but at different precision
     {
-        'product': 'Yaourt nature',
+        'l_pr_product': 'Yaourt nature',
         'coicop_pred': '01.1.4.2.0',
         'code': '01.1.4.2.0',
         'list_retrieved_codes': [
@@ -101,7 +101,7 @@ records_test = [
     # Case 7: LLM wrong at level 4, label in retrieved codes
     # Generation error: had the right code but chose wrong
     {
-        'product': 'Bière blonde artisanale',
+        'l_pr_product': 'Bière blonde artisanale',
         'coicop_pred': '02.1.1.2.0',  # Level 4: 02.1.1.2 (wrong)
         'code': '02.1.1.1.0',          # Level 4: 02.1.1.1 (correct)
         'list_retrieved_codes': [
@@ -116,7 +116,7 @@ records_test = [
     
     # Case 8: Short code (3 levels), LLM correct at level 4
     {
-        'product': 'Essence sans plomb',
+        'l_pr_product': 'Essence sans plomb',
         'coicop_pred': '07.2.2',      # Only 3 levels
         'code': '07.2.2',              # Same
         'list_retrieved_codes': [
@@ -132,7 +132,7 @@ records_test = [
     # Case 9: LLM correct at level 4 even though codes differ at level 5
     # Label NOT fully in retrieved (but level 4 prefix is there)
     {
-        'product': 'Courgettes bio',
+        'l_pr_product': 'Courgettes bio',
         'coicop_pred': '01.1.7.2.9',  # Level 4: 01.1.7.2
         'code': '01.1.7.2.5',          # Level 4: 01.1.7.2 (match!)
         'list_retrieved_codes': [
@@ -148,7 +148,7 @@ records_test = [
     
     # Case 10: Not codable, not parsed (edge case)
     {
-        'product': 'Service non classifiable',
+        'l_pr_product': 'Service non classifiable',
         'coicop_pred': None,
         'code': '13.9.9.9.9',
         'list_retrieved_codes': [],
