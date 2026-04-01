@@ -148,12 +148,6 @@ def main():
         
         # Split records by coding tool
         searched_products_rag = [searched_product for searched_product in searched_products if searched_product["coding_tool"] == "rag"]
-        
-        # count_None = 0
-        # for prod in searched_products_regex:
-        #     if prod["l_pr_product"] is None:
-        #         count_None += 1
-        
         searched_products_regex = [searched_product for searched_product in searched_products if searched_product["coding_tool"] == "regex"]
         
         logger.info(f"  → RAG records: {len(searched_products_rag)}")
