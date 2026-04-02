@@ -1,149 +1,185 @@
+#!/usr/bin/env python3
+"""
+Vector Database Creation
+========================
+Embeds pruned COICOP notices and uploads them to a Qdrant vector database.
+"""
+import argparse
+import logging
 import os
-# os.chdir("coicop-rag")
+import uuid
+
 import duckdb
 import yaml
-import uuid
-import logging
+from openai import OpenAI
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct
-from openai import OpenAI
 
 from coicop_rag.data.coicop_document import CoicopDocument
 from coicop_rag.utils import get_parents
 
-# Config
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('vectorDB.log'),
-        logging.StreamHandler()
+def main():
+    parser = argparse.ArgumentParser(description="Vector database creation pipeline")
+    parser.add_argument(
+        "--config",
+        type=str,
+        default="config/config.yaml",
+        help="Path to config YAML file"
+    )
+    args = parser.parse_args()
+
+    with open(args.config, "r") as f:
+        config = yaml.safe_load(f)
+
+    logger.info("=" * 80)
+    logger.info("STARTING VECTOR DATABASE CREATION PIPELINE")
+    logger.info("=" * 80)
+
+    # -----------------------------------------------------------------------
+    # Initialize clients
+    # -----------------------------------------------------------------------
+
+    con = duckdb.connect(database=":memory:")
+
+    client_emb = OpenAI(
+        base_url=os.environ["VLLM_EMBEDDING_URL"],
+        api_key=os.environ["VLLM_EMBEDDING_API_KEY"]
+    )
+    model_name = client_emb.models.list().data[0].id
+    logger.info(f"Embedding model: {model_name}")
+
+    client_qdrant = QdrantClient(
+        url=os.environ["QDRANT_URL"],
+        api_key=os.environ["QDRANT_API_KEY"],
+        port=os.environ["QDRANT_API_PORT"]
+    )
+
+    # -----------------------------------------------------------------------
+    # Load pruned COICOP notices
+    # -----------------------------------------------------------------------
+
+    logger.info("=" * 80)
+    logger.info("STEP 1: LOADING COICOP NOTICES")
+    logger.info("=" * 80)
+
+    notices_df = con.sql(
+        f"SELECT * FROM read_parquet('{config['coicop']['path_prunned_lvl4']}')"
+    ).to_df()
+
+    columns_to_keep = [
+        col for col in notices_df.columns
+        if "column" not in col.lower() and not col.endswith("_en")
     ]
-)
-logger = logging.getLogger(__name__)
+    notices_df = notices_df[columns_to_keep]
+    notices = notices_df.to_dict(orient="records")
+    logger.info(f"✓ {len(notices)} notices loaded")
 
-with open("config/config.yaml", "r") as f:
-    config = yaml.safe_load(f)
+    # -----------------------------------------------------------------------
+    # Enrich with parent lineage
+    # -----------------------------------------------------------------------
 
-strategy = config["qdrant"]["strategy"] # Basic + hierarchie (no exclusions) 
-logger.info(f"Strategy used : {strategy}")
+    logger.info("=" * 80)
+    logger.info("STEP 2: ENRICHING WITH PARENT LINEAGE")
+    logger.info("=" * 80)
 
-# Set clients
-
-con = duckdb.connect(database=":memory:")
-
-client_gen = OpenAI(
-    base_url=os.environ["VLLM_EMBEDDING_URL"],
-    api_key=os.environ["VLLM_EMBEDDING_API_KEY"]
-)
-
-model_name = client_gen.models.list().data[0].id
-logger.info(f"Embedding model used : {model_name}")
-
-
-# client_gen = OpenAI(
-#     api_key=os.environ["OLLAMA_API_KEY"],
-#     base_url=os.environ["OLLAMA_URL"]
-# )
-
-# Qdrant config
-client_qdrant = QdrantClient(
-    url=os.environ["QDRANT_URL"],
-    api_key=os.environ["QDRANT_API_KEY"],
-    port=os.environ["QDRANT_API_PORT"]
-)
-
-logger.info("Starting data import process")
-
-query = f"""
-    SELECT
-        *
-    FROM read_csv('{config["coicop"]["path_raw"]}');
-"""
-notices_df = duckdb.sql(query).to_df()
-
-columns_to_keep = [
-    col for col in notices_df.columns 
-    if 'column' not in col.lower() and not col.endswith('_en')
-]
-
-notices_df = notices_df[columns_to_keep]
-
-notices = notices_df.to_dict(orient="records")
-
-logger.info(f"Loaded {len(notices)} notices from CSV file")
-
-# Add family lineage info for all codes
-for notice in notices:
-    code = notice["code"]
-    notice["parents"] = get_parents(code)
-    notice["parents_labels"] = (
-        notices_df.loc[
-            notices_df["code"].isin(notice["parents"]),
-            "label_fr"
-        ].to_list()
-    )
-
-
-# Create documents to embed and upload to vectorial database
-documents = []
-for notice in notices:
-    doc = CoicopDocument(
-        code=str(notice['code']),
-        label_fr=str(notice['label_fr']),
-        note_generale_fr=notice.get('note_generale_fr'),
-        contenu_central_fr=notice.get('contenu_central_fr'),
-        contenu_additionnel_fr=notice.get('contenu_additionnel_fr'),
-        note_exclusion_fr=notice.get('note_exclusion_fr'),
-        parents=notice.get('parents'),
-        parents_labels=notice.get('parents_labels'),
-
-    )
-    chunk = doc.to_text_chunks(strategy=strategy)
-    documents.append({
-                        "id": str(uuid.uuid4()),
-                        "text": chunk["text"],
-                        "metadata": {
-                            "code": doc.code,
-                            "label_fr": doc.label_fr,
-                            "strategy": chunk["type"],
-                        }
-                    })
-
-logger.info(f"Created {len(documents)} document chunks")
-
-client_qdrant.recreate_collection(
-    collection_name=config["qdrant"]["collection_name"],
-    vectors_config=VectorParams(
-        size=config["embedding"]["model_len"],
-        distance=Distance.COSINE
-    )
-)
-
-logger.info(f"Recreated Qdrant collection: {config['qdrant']['collection_name']}")
-
-embeddings = []
-for i, document in enumerate(documents):
-    try:
-        response = client_gen.embeddings.create(
-            model=model_name,
-            input=document["text"]
+    for notice in notices:
+        code = notice["code"]
+        notice["parents"] = get_parents(code)
+        notice["parents_labels"] = (
+            notices_df.loc[
+                notices_df["code"].isin(notice["parents"]),
+                "label_fr"
+            ].to_list()
         )
-        embeddings.append(response.data[0].embedding)
-        if (i + 1) % 10 == 0:
-            logger.info(f"Processed {i + 1}/{len(documents)} embeddings")
-    except Exception as e:
-        logger.error(f"Failed to generate embedding for document {i}: {str(e)}")
-        continue
+    logger.info(f"✓ Parent lineage added to {len(notices)} notices")
 
-logger.info(f"Generated {len(embeddings)} embeddings")
+    # -----------------------------------------------------------------------
+    # Build document chunks
+    # -----------------------------------------------------------------------
 
-# Create points for qdrant
+    logger.info("=" * 80)
+    logger.info("STEP 3: BUILDING DOCUMENT CHUNKS")
+    logger.info("=" * 80)
 
-points = []
-for i, (document, embedding) in enumerate(zip(documents, embeddings)):
-    points.append(
+    strategy = config["qdrant"]["strategy"]
+    logger.info(f"Strategy: {strategy}")
+
+    documents = []
+    for notice in notices:
+        doc = CoicopDocument(
+            code=str(notice["code"]),
+            label_fr=str(notice["label_fr"]),
+            note_generale_fr=notice.get("note_generale_fr"),
+            contenu_central_fr=notice.get("contenu_central_fr"),
+            contenu_additionnel_fr=notice.get("contenu_additionnel_fr"),
+            note_exclusion_fr=notice.get("note_exclusion_fr"),
+            parents=notice.get("parents"),
+            parents_labels=notice.get("parents_labels"),
+        )
+        chunk = doc.to_text_chunks(strategy=strategy)
+        documents.append({
+            "id": str(uuid.uuid4()),
+            "text": chunk["text"],
+            "metadata": {
+                "code": doc.code,
+                "label_fr": doc.label_fr,
+                "strategy": chunk["type"],
+            }
+        })
+
+    logger.info(f"✓ {len(documents)} document chunks created")
+
+    # -----------------------------------------------------------------------
+    # Create Qdrant collection
+    # -----------------------------------------------------------------------
+
+    logger.info("=" * 80)
+    logger.info("STEP 4: CREATING QDRANT COLLECTION")
+    logger.info("=" * 80)
+
+    client_qdrant.recreate_collection(
+        collection_name=config["qdrant"]["collection_name"],
+        vectors_config=VectorParams(
+            size=config["embedding"]["model_len"],
+            distance=Distance.COSINE
+        )
+    )
+    logger.info(f"✓ Collection created: {config['qdrant']['collection_name']}")
+
+    # -----------------------------------------------------------------------
+    # Generate embeddings
+    # -----------------------------------------------------------------------
+
+    logger.info("=" * 80)
+    logger.info("STEP 5: GENERATING EMBEDDINGS")
+    logger.info("=" * 80)
+
+    embeddings = []
+    for i, document in enumerate(documents):
+        try:
+            response = client_emb.embeddings.create(
+                model=model_name,
+                input=document["text"]
+            )
+            embeddings.append(response.data[0].embedding)
+            if (i + 1) % 10 == 0:
+                logger.info(f"  → {i + 1}/{len(documents)} embeddings generated")
+        except Exception as e:
+            logger.error(f"Failed to generate embedding for document {i}: {e}")
+            continue
+
+    logger.info(f"✓ {len(embeddings)} embeddings generated")
+
+    # -----------------------------------------------------------------------
+    # Upload to Qdrant
+    # -----------------------------------------------------------------------
+
+    logger.info("=" * 80)
+    logger.info("STEP 6: UPLOADING TO QDRANT")
+    logger.info("=" * 80)
+
+    points = [
         PointStruct(
             id=document["id"],
             vector=embedding,
@@ -152,25 +188,38 @@ for i, (document, embedding) in enumerate(zip(documents, embeddings)):
                 **document["metadata"]
             }
         )
-    )
+        for document, embedding in zip(documents, embeddings)
+    ]
 
-logger.info(f"Prepared {len(points)} points for upload")
+    upload_batch_size = config["qdrant"]["upload_batch_size"]
+    n_batches = (len(points) - 1) // upload_batch_size + 1
+    logger.info(f"Uploading {len(points)} points in {n_batches} batches of {upload_batch_size}")
 
-upload_batch_size = config["qdrant"]["upload_batch_size"]
+    for i in range(0, len(points), upload_batch_size):
+        batch = points[i:i + upload_batch_size]
+        batch_num = i // upload_batch_size + 1
+        try:
+            client_qdrant.upsert(
+                collection_name=config["qdrant"]["collection_name"],
+                points=batch
+            )
+            logger.info(f"  → Batch {batch_num}/{n_batches} uploaded")
+        except Exception as e:
+            logger.error(f"Failed to upload batch {batch_num}: {e}")
+            continue
 
-logger.info(f"Starting upload using batches of size {upload_batch_size}")
+    logger.info("=" * 80)
+    logger.info("VECTOR DATABASE CREATION PIPELINE COMPLETED SUCCESSFULLY!")
+    logger.info("=" * 80)
 
-for i in range(0, len(points), upload_batch_size):
-    batch = points[i:i + upload_batch_size]
-    try:
-        client_qdrant.upsert(
-            collection_name=config["qdrant"]["collection_name"],
-            points=batch
-        )
-        logger.info(f"Uploaded batch {i//upload_batch_size + 1}/{(len(points)-1)//upload_batch_size + 1}")
-    except Exception as e:
-        logger.error(f"Failed to upload batch {i//upload_batch_size + 1}: {str(e)}")
-        continue
 
-logger.info("✓ Upload completed successfully")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler()],
+)
+logger = logging.getLogger(__name__)
 
+
+if __name__ == "__main__":
+    main()
