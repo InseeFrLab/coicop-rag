@@ -1,0 +1,340 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: pipeline-
+spec:
+  entrypoint: pipeline
+
+  arguments:
+    parameters:
+      - name: config
+        value: config/config.yaml
+      - name: sample-size
+        value: ""
+      - name: model-name
+        value: ""
+
+  templates:
+
+    # -----------------------------------------------------------------------
+    # Main pipeline: sequential steps
+    # -----------------------------------------------------------------------
+    - name: pipeline
+      steps:
+        - - name: prune-coicop
+            template: prune-coicop
+            arguments:
+              parameters:
+                - name: config
+                  value: "{{workflow.parameters.config}}"
+
+        - - name: prune-annotations
+            template: prune-annotations
+            arguments:
+              parameters:
+                - name: config
+                  value: "{{workflow.parameters.config}}"
+
+        - - name: create-vector-db
+            template: create-vector-db
+            arguments:
+              parameters:
+                - name: config
+                  value: "{{workflow.parameters.config}}"
+
+        - - name: run-rag
+            template: run-rag
+            arguments:
+              parameters:
+                - name: config
+                  value: "{{workflow.parameters.config}}"
+                - name: sample-size
+                  value: "{{workflow.parameters.sample-size}}"
+                - name: model-name
+                  value: "{{workflow.parameters.model-name}}"
+
+    # -----------------------------------------------------------------------
+    # Step 1: Prune COICOP nomenclature
+    # -----------------------------------------------------------------------
+    - name: prune-coicop
+      inputs:
+        parameters:
+          - name: config
+      container:
+        image: inseefrlab/onyxia-vscode-python:py3.13.12
+        command: [sh, -c]
+        args:
+          - |
+            set -e
+            uv run scripts/0_prunning_coicop.py --config {{inputs.parameters.config}}
+        env:
+          - name: AWS_ACCESS_KEY_ID
+            valueFrom:
+              secretKeyRef:
+                name: secret-rag
+                key: AWS_ACCESS_KEY_ID
+          - name: AWS_SECRET_ACCESS_KEY
+            valueFrom:
+              secretKeyRef:
+                name: secret-rag
+                key: AWS_SECRET_ACCESS_KEY
+          - name: AWS_SESSION_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: secret-rag
+                key: AWS_SESSION_TOKEN
+          - name: DDC_ENCRYPTION_KEY
+            valueFrom:
+              secretKeyRef:
+                name: secret-rag
+                key: DDC_ENCRYPTION_KEY
+        resources:
+          requests:
+            memory: 2Gi
+            cpu: 100m
+          limits:
+            memory: 50Gi
+            cpu: 15000m
+
+    # -----------------------------------------------------------------------
+    # Step 2: Prune annotations
+    # -----------------------------------------------------------------------
+    - name: prune-annotations
+      inputs:
+        parameters:
+          - name: config
+      container:
+        image: inseefrlab/onyxia-vscode-python:py3.13.12
+        command: [sh, -c]
+        args:
+          - |
+            set -e
+            uv run scripts/0_prune_annotations.py --config {{inputs.parameters.config}}
+        env:
+          - name: AWS_ACCESS_KEY_ID
+            valueFrom:
+              secretKeyRef:
+                name: secret-rag
+                key: AWS_ACCESS_KEY_ID
+          - name: AWS_SECRET_ACCESS_KEY
+            valueFrom:
+              secretKeyRef:
+                name: secret-rag
+                key: AWS_SECRET_ACCESS_KEY
+          - name: AWS_SESSION_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: secret-rag
+                key: AWS_SESSION_TOKEN
+          - name: DDC_ENCRYPTION_KEY
+            valueFrom:
+              secretKeyRef:
+                name: secret-rag
+                key: DDC_ENCRYPTION_KEY
+        resources:
+          requests:
+            memory: 2Gi
+            cpu: 100m
+          limits:
+            memory: 50Gi
+            cpu: 15000m
+
+    # -----------------------------------------------------------------------
+    # Step 3: Create vector database
+    # -----------------------------------------------------------------------
+    - name: create-vector-db
+      inputs:
+        parameters:
+          - name: config
+      container:
+        image: inseefrlab/onyxia-vscode-python:py3.13.12
+        command: [sh, -c]
+        args:
+          - |
+            set -e
+            uv run scripts/1_create_vector_db.py --config {{inputs.parameters.config}}
+        env:
+          - name: AWS_ACCESS_KEY_ID
+            valueFrom:
+              secretKeyRef:
+                name: secret-rag
+                key: AWS_ACCESS_KEY_ID
+          - name: AWS_SECRET_ACCESS_KEY
+            valueFrom:
+              secretKeyRef:
+                name: secret-rag
+                key: AWS_SECRET_ACCESS_KEY
+          - name: AWS_SESSION_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: secret-rag
+                key: AWS_SESSION_TOKEN
+          - name: DDC_ENCRYPTION_KEY
+            valueFrom:
+              secretKeyRef:
+                name: secret-rag
+                key: DDC_ENCRYPTION_KEY
+          - name: VLLM_EMBEDDING_URL
+            valueFrom:
+              secretKeyRef:
+                name: secret-rag
+                key: VLLM_EMBEDDING_URL
+          - name: VLLM_EMBEDDING_API_KEY
+            valueFrom:
+              secretKeyRef:
+                name: secret-rag
+                key: VLLM_EMBEDDING_API_KEY
+          - name: QDRANT_URL
+            valueFrom:
+              secretKeyRef:
+                name: secret-rag
+                key: QDRANT_URL
+          - name: QDRANT_API_KEY
+            valueFrom:
+              secretKeyRef:
+                name: secret-rag
+                key: QDRANT_API_KEY
+          - name: QDRANT_API_PORT
+            valueFrom:
+              secretKeyRef:
+                name: secret-rag
+                key: QDRANT_API_PORT
+        resources:
+          requests:
+            memory: 2Gi
+            cpu: 100m
+          limits:
+            memory: 50Gi
+            cpu: 15000m
+
+    # -----------------------------------------------------------------------
+    # Step 4: Run RAG pipeline
+    # -----------------------------------------------------------------------
+    - name: run-rag
+      inputs:
+        parameters:
+          - name: config
+          - name: sample-size
+          - name: model-name
+      container:
+        image: inseefrlab/onyxia-vscode-python:py3.13.12
+        command: [sh, -c]
+        args:
+          - |
+            set -e
+            mkdir -p logs prompts
+
+            ARGS="--config {{inputs.parameters.config}}"
+
+            if [ -n "{{inputs.parameters.sample-size}}" ]; then
+              ARGS="$ARGS --sample-size {{inputs.parameters.sample-size}}"
+            fi
+
+            if [ -n "{{inputs.parameters.model-name}}" ]; then
+              ARGS="$ARGS --model-name {{inputs.parameters.model-name}}"
+            fi
+
+            uv run scripts/2_run_rag.py $ARGS
+        env:
+          - name: LANGFUSE_BASE_URL
+            valueFrom:
+              secretKeyRef:
+                name: secret-rag
+                key: LANGFUSE_BASE_URL
+          - name: LANGFUSE_PUBLIC_KEY
+            valueFrom:
+              secretKeyRef:
+                name: secret-rag
+                key: LANGFUSE_PUBLIC_KEY
+          - name: LANGFUSE_SECRET_KEY
+            valueFrom:
+              secretKeyRef:
+                name: secret-rag
+                key: LANGFUSE_SECRET_KEY
+          - name: MLFLOW_TRACKING_URI
+            valueFrom:
+              secretKeyRef:
+                name: secret-rag
+                key: MLFLOW_TRACKING_URI
+          - name: MLFLOW_TRACKING_USERNAME
+            valueFrom:
+              secretKeyRef:
+                name: secret-rag
+                key: MLFLOW_TRACKING_USERNAME
+          - name: MLFLOW_TRACKING_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: secret-rag
+                key: MLFLOW_TRACKING_PASSWORD
+          - name: OLLAMA_API_KEY
+            valueFrom:
+              secretKeyRef:
+                name: secret-rag
+                key: OLLAMA_API_KEY
+          - name: OLLAMA_URL
+            valueFrom:
+              secretKeyRef:
+                name: secret-rag
+                key: OLLAMA_URL
+          - name: QDRANT_URL
+            valueFrom:
+              secretKeyRef:
+                name: secret-rag
+                key: QDRANT_URL
+          - name: QDRANT_API_KEY
+            valueFrom:
+              secretKeyRef:
+                name: secret-rag
+                key: QDRANT_API_KEY
+          - name: QDRANT_API_PORT
+            valueFrom:
+              secretKeyRef:
+                name: secret-rag
+                key: QDRANT_API_PORT
+          - name: VLLM_EMBEDDING_URL
+            valueFrom:
+              secretKeyRef:
+                name: secret-rag
+                key: VLLM_EMBEDDING_URL
+          - name: VLLM_EMBEDDING_API_KEY
+            valueFrom:
+              secretKeyRef:
+                name: secret-rag
+                key: VLLM_EMBEDDING_API_KEY
+          - name: VLLM_GENERATION_URL
+            valueFrom:
+              secretKeyRef:
+                name: secret-rag
+                key: VLLM_GENERATION_URL
+          - name: VLLM_GENERATION_API_KEY
+            valueFrom:
+              secretKeyRef:
+                name: secret-rag
+                key: VLLM_GENERATION_API_KEY
+          - name: AWS_ACCESS_KEY_ID
+            valueFrom:
+              secretKeyRef:
+                name: secret-rag
+                key: AWS_ACCESS_KEY_ID
+          - name: AWS_SECRET_ACCESS_KEY
+            valueFrom:
+              secretKeyRef:
+                name: secret-rag
+                key: AWS_SECRET_ACCESS_KEY
+          - name: AWS_SESSION_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: secret-rag
+                key: AWS_SESSION_TOKEN
+          - name: DDC_ENCRYPTION_KEY
+            valueFrom:
+              secretKeyRef:
+                name: secret-rag
+                key: DDC_ENCRYPTION_KEY
+        resources:
+          requests:
+            memory: 2Gi
+            cpu: 100m
+          limits:
+            memory: 50Gi
+            cpu: 15000m

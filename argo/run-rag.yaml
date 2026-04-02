@@ -23,7 +23,7 @@ spec:
           - name: sample-size
           - name: model-name
       container:
-        image: inseefrlab/coicop-rag:latest
+        image: inseefrlab/onyxia-vscode-python:py3.13.12
         command: [sh, -c]
         args:
           - |
@@ -40,7 +40,7 @@ spec:
               ARGS="$ARGS --model-name {{inputs.parameters.model-name}}"
             fi
 
-            python scripts/2_run_rag.py $ARGS
+            uv run scripts/2_run_rag.py $ARGS
 
         env:
           # Langfuse
@@ -156,8 +156,8 @@ spec:
 
         resources:
           requests:
-            memory: 4Gi
-            cpu: "2"
+            memory: 2Gi
+            cpu: 100m
           limits:
-            memory: 8Gi
-            cpu: "4"
+            memory: 50Gi
+            cpu: 15000m

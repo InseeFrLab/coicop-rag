@@ -16,12 +16,12 @@ spec:
         parameters:
           - name: config
       container:
-        image: inseefrlab/coicop-rag:latest
+        image: inseefrlab/onyxia-vscode-python:py3.13.12
         command: [sh, -c]
         args:
           - |
             set -e
-            python scripts/0_prunning_coicop.py --config {{inputs.parameters.config}}
+            uv run scripts/0_prunning_coicop.py --config {{inputs.parameters.config}}
 
         env:
           # S3 / AWS
@@ -51,7 +51,7 @@ spec:
         resources:
           requests:
             memory: 2Gi
-            cpu: "1"
+            cpu: 100m
           limits:
-            memory: 4Gi
-            cpu: "2"
+            memory: 50Gi
+            cpu: 15000m
