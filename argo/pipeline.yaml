@@ -17,32 +17,47 @@ spec:
   templates:
 
     # -----------------------------------------------------------------------
-    # Main pipeline: sequential steps
+    # Main pipeline: DAG with parallelism
+    #
+    #   prune-coicop ──→ create-vector-db ──┐
+    #                                        ├──→ run-rag
+    #   prune-annotations ──→ split-rules ──┘
     # -----------------------------------------------------------------------
     - name: pipeline
-      steps:
-        - - name: prune-coicop
+      dag:
+        tasks:
+          - name: prune-coicop
             template: prune-coicop
             arguments:
               parameters:
                 - name: config
                   value: "{{workflow.parameters.config}}"
 
-        - - name: prune-annotations
+          - name: prune-annotations
             template: prune-annotations
             arguments:
               parameters:
                 - name: config
                   value: "{{workflow.parameters.config}}"
 
-        - - name: create-vector-db
+          - name: create-vector-db
+            dependencies: [prune-coicop]
             template: create-vector-db
             arguments:
               parameters:
                 - name: config
                   value: "{{workflow.parameters.config}}"
 
-        - - name: run-rag
+          - name: split-rules
+            dependencies: [prune-annotations]
+            template: split-rules
+            arguments:
+              parameters:
+                - name: config
+                  value: "{{workflow.parameters.config}}"
+
+          - name: run-rag
+            dependencies: [create-vector-db, split-rules]
             template: run-rag
             arguments:
               parameters:
@@ -140,7 +155,50 @@ spec:
             cpu: 15000m
 
     # -----------------------------------------------------------------------
-    # Step 3: Create vector database
+    # Step 3: Split annotations by coding method (regex vs RAG)
+    # -----------------------------------------------------------------------
+    - name: split-rules
+      inputs:
+        parameters:
+          - name: config
+      container:
+        image: inseefrlab/onyxia-vscode-python:py3.13.12
+        command: [sh, -c]
+        args:
+          - |
+            set -e
+            uv run scripts/1_split_rules.py --config {{inputs.parameters.config}}
+        env:
+          - name: AWS_ACCESS_KEY_ID
+            valueFrom:
+              secretKeyRef:
+                name: secret-rag
+                key: AWS_ACCESS_KEY_ID
+          - name: AWS_SECRET_ACCESS_KEY
+            valueFrom:
+              secretKeyRef:
+                name: secret-rag
+                key: AWS_SECRET_ACCESS_KEY
+          - name: AWS_SESSION_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: secret-rag
+                key: AWS_SESSION_TOKEN
+          - name: DDC_ENCRYPTION_KEY
+            valueFrom:
+              secretKeyRef:
+                name: secret-rag
+                key: DDC_ENCRYPTION_KEY
+        resources:
+          requests:
+            memory: 2Gi
+            cpu: 100m
+          limits:
+            memory: 50Gi
+            cpu: 15000m
+
+    # -----------------------------------------------------------------------
+    # Step 4: Create vector database
     # -----------------------------------------------------------------------
     - name: create-vector-db
       inputs:

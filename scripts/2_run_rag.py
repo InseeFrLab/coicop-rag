@@ -19,11 +19,7 @@ import subprocess
 import random
 
 from coicop_rag.data.parsing import extract_json_from_response
-from coicop_rag.utils import (
-    merge_eval_and_retreived,  
-    apply_rules, 
-    load_rules
-)
+from coicop_rag.utils import merge_eval_and_retreived
 from coicop_rag.eval.metrics import (
     compute_hierarchical_metrics,
     calculate_accuracy_at_level,
@@ -107,43 +103,21 @@ def main():
         # Load and prepare annotations
         # -----------------------------------------------------------------------
 
-        # Import products to code (annotated, already pruned by 3_prune_annotations.py)
-        mlflow.log_param("input_data_path", config['annotations']['s3_path_pruned'])
-        searched_products, nature_annotation = load_and_prepare_annotations(con, config)
-    
-        mlflow.log_param("nature_annotation", nature_annotation)
-        mlflow.log_metric("num_products", len(searched_products))
+        # Import RAG products (already split by 1_split_rules.py)
+        mlflow.log_param("input_data_path", config['annotations']['s3_path_rag'])
+        searched_products_rag, nature_annotation = load_and_prepare_annotations(con, config)
 
-        # Import deterministic coding rules
-        # rules = load_rules("config/rules.yaml")
-        rules = load_rules(config["eval"]["rules_path"])
+        mlflow.log_param("nature_annotation", nature_annotation)
+        mlflow.log_metric("num_products", len(searched_products_rag))
 
         # -----------------------------------------------------------------------
         # Execute main pipeline steps
         # -----------------------------------------------------------------------
-        
-        # Step 0: Deterministic classification
-        
-        # Apply business rules
-        searched_products = apply_rules(
-            records=searched_products,
-            rules=rules
-        )
-        
-        # Split records by coding tool
-        searched_products_rag = [searched_product for searched_product in searched_products if searched_product["coding_tool"] == "rag"]
-        searched_products_regex = [searched_product for searched_product in searched_products if searched_product["coding_tool"] == "regex"]
-        
-        logger.info(f"  → RAG records: {len(searched_products_rag)}")
-        logger.info(f"  → Regex records: {len(searched_products_regex)}")
-        
-        mlflow.log_metric("num_records_rag", len(searched_products_rag))
-        mlflow.log_metric("num_records_regex", len(searched_products_regex)) 
 
         # Step 1: Generate embeddings
         search_embeddings, embedding_dim = generate_embeddings(
-            searched_products_rag, 
-            client_vllm_emb, 
+            searched_products_rag,
+            client_vllm_emb,
             config
         )
         mlflow.log_param("embedding_dimension", embedding_dim)
@@ -539,7 +513,7 @@ def load_prompt_template(config):
 
 def load_and_prepare_annotations(con, config):
     """
-    Load pruned annotations from S3 (produced by 3_prune_annotations.py).
+    Load RAG annotations from S3 (produced by 1_split_rules.py).
 
     Args:
         con: DuckDB connection
@@ -548,10 +522,10 @@ def load_and_prepare_annotations(con, config):
     Returns:
         tuple: (searched_products, nature_annotation)
     """
-    logger.info("Loading pruned annotations...")
+    logger.info("Loading RAG annotations...")
 
     annotations = con.sql(
-        f"SELECT * FROM read_parquet('{config['annotations']['s3_path_pruned']}')"
+        f"SELECT * FROM read_parquet('{config['annotations']['s3_path_rag']}')"
     ).to_df()
 
     nature_annotation = config["annotations"]["nature"]
