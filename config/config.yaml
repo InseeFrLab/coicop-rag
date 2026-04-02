@@ -26,7 +26,7 @@ coicop:
 annotations:
   s3_path: "s3://projet-budget-famille/data/output-annotation-consolidated/annotations-consolidated-2026-03-26/raw_test.parquet"
   s3_path_pruned: "s3://projet-budget-famille/data/workflow_outputs/prunning/raw_test_pruned.parquet"
-  sample_size: 128
+  sample_size: null
   features:
     - id
     - l_pr_product

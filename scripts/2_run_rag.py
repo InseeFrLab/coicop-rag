@@ -197,7 +197,6 @@ def main():
             df_eval,
             df_retrieved_codes,
             config,
-            rules,
         )
 
         # Step 9 : get sample of tricky errors
@@ -565,7 +564,7 @@ def load_and_prepare_annotations(con, config):
     searched_products = annotations.to_dict(orient="records")
 
     # Apply sampling if configured
-    sample_size = config["annotations"]["sample_size"]
+    sample_size = int(config["annotations"]["sample_size"]) if config["annotations"]["sample_size"] else 0
     if sample_size:
         random.seed(42)
         searched_products = random.sample(searched_products, sample_size)
@@ -884,7 +883,7 @@ def get_git_branch():
         return None
 
 
-def compute_and_log_metrics(df_eval, df_retrieved_codes, config, rules):
+def compute_and_log_metrics(df_eval, df_retrieved_codes, config):
     """
     Compute evaluation metrics and log to MLflow.
 
