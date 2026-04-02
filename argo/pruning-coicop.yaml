@@ -1,0 +1,57 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: pruning-coicop-
+spec:
+  entrypoint: pruning-coicop
+
+  arguments:
+    parameters:
+      - name: config
+        value: config/config.yaml
+
+  templates:
+    - name: pruning-coicop
+      inputs:
+        parameters:
+          - name: config
+      container:
+        image: inseefrlab/coicop-rag:latest
+        command: [sh, -c]
+        args:
+          - |
+            set -e
+            python scripts/0_prunning_coicop.py --config {{inputs.parameters.config}}
+
+        env:
+          # S3 / AWS
+          - name: AWS_ACCESS_KEY_ID
+            valueFrom:
+              secretKeyRef:
+                name: secret-rag
+                key: AWS_ACCESS_KEY_ID
+          - name: AWS_SECRET_ACCESS_KEY
+            valueFrom:
+              secretKeyRef:
+                name: secret-rag
+                key: AWS_SECRET_ACCESS_KEY
+          - name: AWS_SESSION_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: secret-rag
+                key: AWS_SESSION_TOKEN
+
+          # Misc
+          - name: DDC_ENCRYPTION_KEY
+            valueFrom:
+              secretKeyRef:
+                name: secret-rag
+                key: DDC_ENCRYPTION_KEY
+
+        resources:
+          requests:
+            memory: 2Gi
+            cpu: "1"
+          limits:
+            memory: 4Gi
+            cpu: "2"
