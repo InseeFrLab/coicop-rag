@@ -138,14 +138,19 @@ def main():
     logger.info("STEP 4: CREATING QDRANT COLLECTION")
     logger.info("=" * 80)
 
-    client_qdrant.recreate_collection(
-        collection_name=config["qdrant"]["collection_name"],
+    collection_name = config["qdrant"]["collection_name"]
+    if client_qdrant.collection_exists(collection_name):
+        client_qdrant.delete_collection(collection_name)
+        logger.info(f"  → Existing collection deleted: {collection_name}")
+
+    client_qdrant.create_collection(
+        collection_name=collection_name,
         vectors_config=VectorParams(
             size=config["embedding"]["model_len"],
             distance=Distance.COSINE
         )
     )
-    logger.info(f"✓ Collection created: {config['qdrant']['collection_name']}")
+    logger.info(f"✓ Collection created: {collection_name}")
 
     # -----------------------------------------------------------------------
     # Generate embeddings
@@ -218,6 +223,7 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     handlers=[logging.StreamHandler()],
 )
+logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 

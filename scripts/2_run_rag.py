@@ -5,14 +5,10 @@ RAG COICOP Pipeline
 Pipeline for automatic COICOP coding using RAG (Retrieval-Augmented Generation)
 """
 import os
-# os.getcwd()
-# os.chdir("coicop-rag")
 import yaml
 import datetime
-import uuid
 import logging
 import argparse
-from pathlib import Path
 from tqdm import tqdm
 import duckdb
 import pandas as pd
@@ -24,7 +20,6 @@ import subprocess
 import random
 
 from coicop_rag.data.parsing import extract_json_from_response
-from coicop_rag.data.pruning import prune_annotation_lvl4, trunc_and_prune_lvl4, _trunc_and_prune_lvl4
 from coicop_rag.utils import (
     merge_eval_and_retreived,  
     apply_rules, 
@@ -95,7 +90,6 @@ def main():
             "prompt_name": config["llm"]["prompt_name"],
             "prompt_version": config["llm"]["prompt_version"],
             "threshold_confidence": config["eval"]["threshold_confidence"],
-            "prune": config['eval']['prune']
         })
         
         # -----------------------------------------------------------------------
@@ -113,19 +107,10 @@ def main():
         # -----------------------------------------------------------------------
         # Load and prepare annotations
         # -----------------------------------------------------------------------
-        
-        # Load mapping tables for pruning
-        mapping_table_lvl4 = con.sql(
-            f"SELECT * FROM read_parquet('{config['coicop']['path_mapping_lvl4']}')"
-        ).to_df()
-        
-        notices_raw = con.sql(
-            f"SELECT * FROM read_csv('{config['coicop']['path_raw']}')"
-        ).to_df()
-        
-        # Import products to code (annotated)
-        mlflow.log_param("input_data_path", config['annotations']['s3_path'])
-        searched_products, nature_annotation = load_and_prepare_annotations(con, config, mapping_table_lvl4, notices_raw)
+
+        # Import products to code (annotated, already pruned by 3_prune_annotations.py)
+        mlflow.log_param("input_data_path", config['annotations']['s3_path_pruned'])
+        searched_products, nature_annotation = load_and_prepare_annotations(con, config)
     
         mlflow.log_param("nature_annotation", nature_annotation)
         mlflow.log_metric("num_products", len(searched_products))
@@ -189,14 +174,10 @@ def main():
         mlflow.log_metric("parse_errors", n_parse_errors)
         
         # Step 6: Create evaluation dataset
-        df_eval, df_retrieved_codes, df_retrieved_codes_tprune = (
-            create_evaluation_dataframe(
-                    llm_responses_parsed=llm_responses_parsed,
-                    searched_products=searched_products_rag,
-                    qdrant_results_codes=qdrant_results_codes,
-                    prune=config['eval']['prune'],
-                    mapping_table_lvl4=mapping_table_lvl4,
-                )
+        df_eval, df_retrieved_codes = create_evaluation_dataframe(
+            llm_responses_parsed=llm_responses_parsed,
+            searched_products=searched_products_rag,
+            qdrant_results_codes=qdrant_results_codes,
         )
 
         # Step 7: Export RAG predictions
@@ -215,9 +196,8 @@ def main():
 
         metrics = compute_and_log_metrics(
             df_eval,
-            df_retrieved_codes_tprune,
+            df_retrieved_codes,
             config,
-            config['eval']['prune'],
             rules,
         )
 
@@ -227,9 +207,6 @@ def main():
             sample_size=40,
             df_eval=df_eval,
             df_retrieved_codes=df_retrieved_codes,
-            retrieval_size=config["retrieval"]["size"],
-            code_name="code_tprune" if config["eval"]["prune"] else "code",
-            col_retrieved_codes_name="list_retrieved_codes",
             config=config,
             level=4,
         )
@@ -288,6 +265,7 @@ def setup_logging():
             )
         ]
     )
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     return logging.getLogger(__name__)
 
 
@@ -393,12 +371,6 @@ def setup_argument_parser():
         help='MLflow experiment name (overrides config)'
     )
 
-    parser.add_argument(
-        '--noprune',
-        action='store_true',
-        help='Enable pruning'
-    )
-    
     return parser
 
 
@@ -441,9 +413,6 @@ def merge_config_with_args(config, args):
         
     if args.experiment_name is not None:
         config['mlflow']['experiment_name'] = args.experiment_name
-    
-    if args.noprune is False:
-        config['eval']['prune'] = True
     
     return config
 
@@ -570,61 +539,41 @@ def load_prompt_template(config):
     return prompt_template
 
 
-def load_and_prepare_annotations(con, config, mapping_table_lvl4, notices_raw):
+def load_and_prepare_annotations(con, config):
     """
-    Load annotations from S3 and apply filtering/pruning
-    
+    Load pruned annotations from S3 (produced by 3_prune_annotations.py).
+
     Args:
         con: DuckDB connection
         config: Configuration dictionary
-        
+
     Returns:
-        list: List of product dictionaries ready for processing
+        tuple: (searched_products, nature_annotation)
     """
-    logger.info("Loading and preparing annotations...")
-    
-    # Load annotations from S3
-    query_definition = f"SELECT * FROM read_parquet('{config['annotations']['s3_path']}')"
-    annotations = con.sql(query_definition).to_df()
-    
-    # Filter by annotation type if specified
+    logger.info("Loading pruned annotations...")
+
+    annotations = con.sql(
+        f"SELECT * FROM read_parquet('{config['annotations']['s3_path_pruned']}')"
+    ).to_df()
+
     nature_annotation = config["annotations"]["nature"]
-    if nature_annotation:
-        annotations = annotations.loc[annotations["source"] == nature_annotation]
-    
-    annotations = annotations[
-        config["annotations"]["features"]
-    ]
-    
+
     logger.info(
         f"✓ Annotations loaded: {len(annotations)} rows "
         f"(type: {nature_annotation or 'all'})"
     )
-    
- 
-    # Prune annotations (remove children codes in linear relation)
-    logger.info("Pruning annotations...")
-    annotations = prune_annotation_lvl4(
-        annotations,
-        mapping_table_lvl4,
-        notices_raw
-    )
-    
-    searched_products = (
-        annotations
-        .to_dict(orient="records")
-    )
-    
+
+    searched_products = annotations.to_dict(orient="records")
+
     # Apply sampling if configured
     sample_size = config["annotations"]["sample_size"]
     if sample_size:
-        import random
         random.seed(42)
         searched_products = random.sample(searched_products, sample_size)
         logger.info(f"✓ Sampling applied: {sample_size} products")
-    
+
     logger.info(f"✓ Total products to process: {len(searched_products)}")
-    
+
     return searched_products, nature_annotation
 
 
@@ -837,63 +786,39 @@ def create_evaluation_dataframe(
         llm_responses_parsed,
         searched_products,
         qdrant_results_codes,
-        prune,
-        mapping_table_lvl4,
     ):
     """
-    Create evaluation dataframe combining predictions and ground truth
-    
+    Create evaluation dataframe combining predictions and ground truth.
+
+    Annotations are already truncated and pruned (by 3_prune_annotations.py),
+    and RAG predictions are drawn from the pruned vector DB, so no further
+    truncation or pruning is needed here.
+
     Args:
         llm_responses_parsed: Parsed LLM responses
-        searched_products: Original product data with annotations
+        searched_products: Original product data with pruned annotations
         qdrant_results_codes: Retrieved COICOP codes
-        
+
     Returns:
         tuple: (evaluation_df, retrieved_codes_df)
     """
     logger.info("=" * 80)
     logger.info("STEP 5: CREATING EVALUATION DATASET")
     logger.info("=" * 80)
-    
+
     rows = []
-    for i in range(len(llm_responses_parsed)):
-        pred = llm_responses_parsed[i]
-        annotation = searched_products[i]
-        row = pred | annotation
-        if prune:
-            # Trunc and prune LLM's prediction
-            row["code_predict_tprune"] = _trunc_and_prune_lvl4(
-                code=row.get("code_predict", None), # None if not parsed
-                mapping_table_lvl4=mapping_table_lvl4
-            )
-            # Trunc and prune annotations
-            row["code_tprune"] = _trunc_and_prune_lvl4(
-                code=row["code"],
-                mapping_table_lvl4=mapping_table_lvl4
-            )
-        rows.append(row)
-    
+    for pred, annotation in zip(llm_responses_parsed, searched_products):
+        rows.append(pred | annotation)
+
     df_eval = pd.DataFrame(rows)
     df_eval["method"] = "rag-notices"
-
-    if prune: 
-        qdrant_results_codes_tprune = [
-            [_trunc_and_prune_lvl4(code, mapping_table_lvl4) for code in sublist]
-            for sublist in qdrant_results_codes
-        ]
-        df_retrieved_codes_tprune = pd.DataFrame(qdrant_results_codes_tprune)
-        df_retrieved_codes_tprune.columns = df_retrieved_codes_tprune.columns.astype(str)
-        df_retrieved_codes_tprune["id"] = df_eval["id"]
 
     df_retrieved_codes = pd.DataFrame(qdrant_results_codes)
     df_retrieved_codes.columns = df_retrieved_codes.columns.astype(str)
     df_retrieved_codes["id"] = df_eval["id"]
-    
+
     logger.info(f"✓ Evaluation dataset created: {len(df_eval)} rows")
 
-    if prune: 
-        return df_eval, df_retrieved_codes, df_retrieved_codes_tprune
-    
     return df_eval, df_retrieved_codes
   
 
@@ -960,101 +885,74 @@ def get_git_branch():
         return None
 
 
-def compute_and_log_metrics(df_eval, df_retrieved_codes, config, prune, rules):
+def compute_and_log_metrics(df_eval, df_retrieved_codes, config, rules):
     """
-    Compute evaluation metrics and log to MLflow
-    
+    Compute evaluation metrics and log to MLflow.
+
     Args:
         df_eval: Evaluation dataframe
         df_retrieved_codes: Retrieved codes dataframe
         config: Configuration dictionary
-        
+
     Returns:
         dict: Computed metrics
     """
     logger.info("=" * 80)
     logger.info("STEP 7: COMPUTING METRICS")
     logger.info("=" * 80)
-    
-    # Merge evaluation and retrieved data
+
     records = merge_eval_and_retreived(
         df_eval=df_eval,
         retrieved_codes=df_retrieved_codes,
         retrieval_size=config["retrieval"]["size"],
-        code_name="code_tprune" if prune else "code",
+        code_name="code",
         col_retrieved_codes_name="list_retrieved_codes",
     )
-    
-    # # Apply business rules
-    # records = apply_rules(
-    #     records=records,
-    #     rules=rules
-    # )
-    
-    # # Split records by coding tool
-    # records_rag = [record for record in records if record["coding_tool"] == "rag"]
-    # records_regex = [record for record in records if record["coding_tool"] == "regex"]
-    
-    # logger.info(f"  → RAG records: {len(records_rag)}")
-    # logger.info(f"  → Regex records: {len(records_regex)}")
-    
-    # mlflow.log_metric("num_records_rag", len(records_rag))
-    # mlflow.log_metric("num_records_regex", len(records_regex))
-    
-    # Compute hierarchical metrics
+
     metrics = compute_hierarchical_metrics(
         records=records,
         threshold=config["eval"]["threshold_confidence"],
-        predicted_col="code_predict_tprune" if prune else "code_predict",
-        label_col="code_tprune" if prune else "code",
+        predicted_col="code_predict",
+        label_col="code",
         retrieved_col="list_retrieved_codes"
     )
-    
-    metrics_mlflow = flatten_metrics(metrics)
-    
-    # Log metrics to MLflow
-    logger.info("Logging metrics to MLflow:")
-    for metric_name, metric_value in metrics_mlflow.items():
-        mlflow.log_metric(metric_name, metric_value)
-        #logger.info(f"  → {metric_name}: {metric_value:.4f}")
-    
+
+    # Only log overall metrics to MLflow (by_product_type is in the report)
+    metrics_mlflow = flatten_metrics(metrics, include_product_types=False)
+    mlflow.log_metrics(metrics_mlflow)
+
     logger.info("✓ Metrics computed and logged")
-    
+
     return metrics
 
 
 def get_tricky_errors(
-  sample_size: int,
-  df_eval,
-  df_retrieved_codes,
-  retrieval_size,
-  code_name,
-  col_retrieved_codes_name,
-  config,
-  level,
+    sample_size: int,
+    df_eval,
+    df_retrieved_codes,
+    config,
+    level,
 ):
-    prune = config["eval"]["prune"]
-
     records = merge_eval_and_retreived(
         df_eval=df_eval,
         retrieved_codes=df_retrieved_codes,
         retrieval_size=config["retrieval"]["size"],
-        code_name="code_tprune" if prune else "code",
+        code_name="code",
         col_retrieved_codes_name="list_retrieved_codes",
     )
-  
+
     (
-      overall_accuracy,
-      result_list,
-      retrieval_accuracy,
-      generation_accuracy_when_retrieved,
-      label_in_retrieved_list
+        overall_accuracy,
+        result_list,
+        retrieval_accuracy,
+        generation_accuracy_when_retrieved,
+        label_in_retrieved_list
     ) = calculate_accuracy_at_level(
-      records=records,
-      predicted_col="code_predict_tprune" if prune else "code_predict",
-      label_col="code_tprune" if prune else "code",
-      level=level,
-      retrieved_col='list_retrieved_codes'
+        records=records,
+        predicted_col="code_predict",
+        label_col="code",
+        level=level,
+        retrieved_col="list_retrieved_codes"
     )
 
     errors_list = [x for x, m in zip(records, result_list) if not m]
@@ -1062,19 +960,15 @@ def get_tricky_errors(
     real_errors = [x for x in codable_errors if (x["code"][:2] not in ("98", "99"))]
 
     keys_to_keep = [
-      "l_pr_product", "shop", "code", 
-      "code_predict", "confidence", "budget", 
-      "in_retrieved"
+        "l_pr_product", "shop", "code",
+        "code_predict", "confidence", "budget",
+        "in_retrieved"
     ]
     sample_size = min(sample_size, len(real_errors))
     real_errors_sample = random.sample(real_errors, sample_size)
 
-    res = []
-    for e in real_errors_sample:
-        res.append({k: e.get(k) for k in keys_to_keep})
-
-    res = pd.DataFrame(res)
-    return res
+    res = [{ k: e.get(k) for k in keys_to_keep } for e in real_errors_sample]
+    return pd.DataFrame(res)
 
 
 
