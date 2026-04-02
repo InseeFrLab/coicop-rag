@@ -1,7 +1,7 @@
 # config.yaml
 qdrant:
   strategy: "with_hierarchy"
-  collection_name: "coicop_lineage_noexclusions"
+  collection_name: "coicop_trunc_prun"
   upload_batch_size: 56
 
 embedding:
@@ -13,7 +13,7 @@ retrieval:
 
 llm:
   prompt_name: prompt-multi-level
-  prompt_version: "9"
+  prompt_version: "10"
   model_name: openai/gpt-oss-120b
   temperature: 0.1
   max_tokens: 2048
