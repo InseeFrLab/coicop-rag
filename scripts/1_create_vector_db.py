@@ -8,14 +8,13 @@ import logging
 import os
 import uuid
 
-import duckdb
 import yaml
 from openai import OpenAI
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct
 
 from coicop_rag.data.coicop_document import CoicopDocument
-from coicop_rag.utils import get_parents
+from coicop_rag.utils import create_duckdb_connection, get_parents
 
 
 def main():
@@ -39,7 +38,7 @@ def main():
     # Initialize clients
     # -----------------------------------------------------------------------
 
-    con = duckdb.connect(database=":memory:")
+    con = create_duckdb_connection()
 
     client_emb = OpenAI(
         base_url=os.environ["VLLM_EMBEDDING_URL"],

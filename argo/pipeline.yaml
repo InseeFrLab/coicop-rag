@@ -4,6 +4,7 @@ metadata:
   generateName: pipeline-
 spec:
   entrypoint: pipeline
+  serviceAccountName: workflow
 
   podSpecPatch: |
     containers:
