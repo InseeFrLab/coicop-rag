@@ -10,7 +10,7 @@ spec:
     parameters:
       - name: config
         value: config/config.yaml
-      - name: sample-size
+      - name: sample_size
         value: ""
       - name: model-name
         value: ""
@@ -20,7 +20,7 @@ spec:
       inputs:
         parameters:
           - name: config
-          - name: sample-size
+          - name: sample_size
           - name: model-name
       container:
         image: inseefrlab/onyxia-vscode-python:py3.13.12
@@ -32,15 +32,15 @@ spec:
 
             ARGS="--config {{inputs.parameters.config}}"
 
-            if [ -n "{{inputs.parameters.sample-size}}" ]; then
-              ARGS="$ARGS --sample-size {{inputs.parameters.sample-size}}"
+            if [ -n "{{inputs.parameters.sample_size}}" ]; then
+              ARGS="$ARGS --sample_size {{inputs.parameters.sample_size}}"
             fi
 
             if [ -n "{{inputs.parameters.model-name}}" ]; then
               ARGS="$ARGS --model-name {{inputs.parameters.model-name}}"
             fi
 
-            uv run scripts/2_run_rag.py $ARGS
+            uv run scripts/3_run_rag.py $ARGS
 
         env:
           # Langfuse

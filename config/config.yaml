@@ -39,6 +39,7 @@ annotations:
     - shop_type_name
     - budget
     - n_obs
+    - source
   nature: manual_from_book
 
 predictions:
