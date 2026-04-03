@@ -81,7 +81,7 @@ spec:
         args:
           - |
             set -e
-            git clone --branch dev https://github.com/InseeFrLab/coicop-rag.git .
+            git clone --branch dev https://github.com/InseeFrLab/coicop-rag.git repo && cd repo
             uv run scripts/0_prunning_coicop.py --config {{inputs.parameters.config}}
         env:
           - name: AWS_ACCESS_KEY_ID
@@ -125,7 +125,7 @@ spec:
         args:
           - |
             set -e
-            git clone --branch dev https://github.com/InseeFrLab/coicop-rag.git .
+            git clone --branch dev https://github.com/InseeFrLab/coicop-rag.git repo && cd repo
             uv run scripts/1_prune_annotations.py --config {{inputs.parameters.config}}
         env:
           - name: AWS_ACCESS_KEY_ID
@@ -169,7 +169,7 @@ spec:
         args:
           - |
             set -e
-            git clone --branch dev https://github.com/InseeFrLab/coicop-rag.git .
+            git clone --branch dev https://github.com/InseeFrLab/coicop-rag.git repo && cd repo
             uv run scripts/2_split_rules.py --config {{inputs.parameters.config}}
         env:
           - name: AWS_ACCESS_KEY_ID
@@ -213,7 +213,7 @@ spec:
         args:
           - |
             set -e
-            git clone --branch dev https://github.com/InseeFrLab/coicop-rag.git .
+            git clone --branch dev https://github.com/InseeFrLab/coicop-rag.git repo && cd repo
             uv run scripts/1_create_vector_db.py --config {{inputs.parameters.config}}
         env:
           - name: AWS_ACCESS_KEY_ID
@@ -284,7 +284,7 @@ spec:
         args:
           - |
             set -e
-            git clone --branch dev https://github.com/InseeFrLab/coicop-rag.git .
+            git clone --branch dev https://github.com/InseeFrLab/coicop-rag.git repo && cd repo
             mkdir -p logs prompts
 
             ARGS="--config {{inputs.parameters.config}}"
