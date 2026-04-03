@@ -5,6 +5,15 @@ metadata:
 spec:
   entrypoint: pipeline
 
+  podSpecPatch: |
+    containers:
+      - name: main
+        env:
+          - name: AWS_DEFAULT_REGION
+            value: "us-east-1"
+          - name: AWS_S3_ENDPOINT
+            value: "minio.lab.sspcloud.fr"
+
   arguments:
     parameters:
       - name: config
