@@ -6,8 +6,8 @@ from eval.metrics import calculate_accuracy_at_level
 records_test = [
     # Case 1: Perfect match - LLM correct, label in retrieved codes
     {
-        'product': 'Pain complet bio',
-        'coicop_pred': '01.1.1.1.2',
+        'l_pr_product': 'Pain complet bio',
+        'code_predict': '01.1.1.1.2',
         'code': '01.1.1.1.2',
         'list_retrieved_codes': [
             '01.1.1.1.2',
@@ -22,8 +22,8 @@ records_test = [
     # Case 2: LLM correct at level 4, but full codes differ (truncate helps)
     # Label NOT in retrieved codes, but LLM guesses correctly at level 4
     {
-        'product': 'Chocolat noir 70%',
-        'coicop_pred': '01.1.8.3.5',  # Level 4: 01.1.8.3
+        'l_pr_product': 'Chocolat noir 70%',
+        'code_predict': '01.1.8.3.5',  # Level 4: 01.1.8.3
         'code': '01.1.8.3.7',          # Level 4: 01.1.8.3 (same!)
         'list_retrieved_codes': [
             '01.1.8.1.0',
@@ -38,8 +38,8 @@ records_test = [
     
     # Case 3: LLM wrong even though correct code is in retrieved codes
     {
-        'product': 'Vin rouge Bordeaux',
-        'coicop_pred': '02.1.2.0.0',  # Wrong choice
+        'l_pr_product': 'Vin rouge Bordeaux',
+        'code_predict': '02.1.2.0.0',  # Wrong choice
         'code': '02.1.1.1.0',          # Correct code
         'list_retrieved_codes': [
             '02.1.1.1.0',  # Correct code IS here!
@@ -53,8 +53,8 @@ records_test = [
     
     # Case 4: LLM wrong, label not in retrieved codes (retriever failed)
     {
-        'product': 'Smartphone Samsung',
-        'coicop_pred': '08.2.1.0.0',
+        'l_pr_product': 'Smartphone Samsung',
+        'code_predict': '08.2.1.0.0',
         'code': '08.2.0.1.0',
         'list_retrieved_codes': [
             '08.2.1.0.0',
@@ -70,8 +70,8 @@ records_test = [
     # Case 5: LLM correct at level 4 thanks to truncate, different level 5
     # Label IS in retrieved codes (at full precision)
     {
-        'product': 'Café arabica moulu',
-        'coicop_pred': '01.2.1.0.3',  # Level 4: 01.2.1.0
+        'l_pr_product': 'Café arabica moulu',
+        'code_predict': '01.2.1.0.3',  # Level 4: 01.2.1.0
         'code': '01.2.1.0.1',          # Level 4: 01.2.1.0 (match!)
         'list_retrieved_codes': [
             '01.2.1.0.1',  # Exact label is here
@@ -85,8 +85,8 @@ records_test = [
     
     # Case 6: LLM correct, label in retrieved but at different precision
     {
-        'product': 'Yaourt nature',
-        'coicop_pred': '01.1.4.2.0',
+        'l_pr_product': 'Yaourt nature',
+        'code_predict': '01.1.4.2.0',
         'code': '01.1.4.2.0',
         'list_retrieved_codes': [
             '01.1.4.2',    
@@ -101,8 +101,8 @@ records_test = [
     # Case 7: LLM wrong at level 4, label in retrieved codes
     # Generation error: had the right code but chose wrong
     {
-        'product': 'Bière blonde artisanale',
-        'coicop_pred': '02.1.1.2.0',  # Level 4: 02.1.1.2 (wrong)
+        'l_pr_product': 'Bière blonde artisanale',
+        'code_predict': '02.1.1.2.0',  # Level 4: 02.1.1.2 (wrong)
         'code': '02.1.1.1.0',          # Level 4: 02.1.1.1 (correct)
         'list_retrieved_codes': [
             '02.1.1.1.0',  # Correct code IS in retrieved!
@@ -116,8 +116,8 @@ records_test = [
     
     # Case 8: Short code (3 levels), LLM correct at level 4
     {
-        'product': 'Essence sans plomb',
-        'coicop_pred': '07.2.2',      # Only 3 levels
+        'l_pr_product': 'Essence sans plomb',
+        'code_predict': '07.2.2',      # Only 3 levels
         'code': '07.2.2',              # Same
         'list_retrieved_codes': [
             '07.2.2',
@@ -132,8 +132,8 @@ records_test = [
     # Case 9: LLM correct at level 4 even though codes differ at level 5
     # Label NOT fully in retrieved (but level 4 prefix is there)
     {
-        'product': 'Courgettes bio',
-        'coicop_pred': '01.1.7.2.9',  # Level 4: 01.1.7.2
+        'l_pr_product': 'Courgettes bio',
+        'code_predict': '01.1.7.2.9',  # Level 4: 01.1.7.2
         'code': '01.1.7.2.5',          # Level 4: 01.1.7.2 (match!)
         'list_retrieved_codes': [
             '01.1.7.2.1',  # Same level 4 prefix
@@ -148,8 +148,8 @@ records_test = [
     
     # Case 10: Not codable, not parsed (edge case)
     {
-        'product': 'Service non classifiable',
-        'coicop_pred': None,
+        'l_pr_product': 'Service non classifiable',
+        'code_predict': None,
         'code': '13.9.9.9.9',
         'list_retrieved_codes': [],
         'confidence': 0.0,
@@ -160,7 +160,7 @@ records_test = [
 
 result = calculate_accuracy_at_level(
     records_test,
-    "coicop_pred",
+    "code_predict",
     "code",
     4,
     "list_retrieved_codes"

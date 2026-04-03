@@ -209,6 +209,5 @@ __marimo__/
 report.txt
 reports.txt
 
-logs/
 *.log
 src/__pycache__/

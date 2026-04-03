@@ -196,7 +196,7 @@ def filter_records(
 # def compute_hierarchical_metrics(
 #     records: List[Dict],
 #     product_col: str = "product",
-#     predicted_col: str = "coicop_pred",
+#     predicted_col: str = "code_predict",
 #     label_col: str = "code",
 #     confidence_col: str = "confidence",
 #     codable_col: str = "codable",
@@ -286,7 +286,7 @@ def filter_records(
 def compute_hierarchical_metrics(
     records: List[Dict],
     product_col: str = "product",
-    predicted_col: str = "coicop_pred",
+    predicted_col: str = "code_predict",
     label_col: str = "code",
     confidence_col: str = "confidence",
     codable_col: str = "codable",
@@ -296,8 +296,11 @@ def compute_hierarchical_metrics(
     by_product_type: bool = True,
 ) -> Dict[str, Dict]:
     """
-    Compute hierarchical accuracy metrics with retrieval analysis
-    
+    Compute hierarchical accuracy metrics with retrieval analysis.
+
+    Optimized: truncations and retrieval checks are pre-computed once per record,
+    and filter groups are built once and reused across product types.
+
     Args:
         records: List of dictionnaries
         product_col: Column name for product description
@@ -309,120 +312,104 @@ def compute_hierarchical_metrics(
         retrieved_col: Column name for list of retrieved codes
         threshold: Confidence threshold for filtering
         by_product_type: If True, compute metrics per product type (COICOP prefix)
-    
+
     Returns:
         Dictionary with metrics including retrieval analysis and optional breakdown by product type
     """
-    
-    # Initialize results dictionary
-    results = {
-        'overall': {},
-        'by_product_type': {}
+
+    # ------------------------------------------------------------------
+    # 1. Pre-process: truncate codes and check retrieval at all levels once
+    # ------------------------------------------------------------------
+    preprocessed = []
+    for r in records:
+        pred = r.get(predicted_col)
+        label = r.get(label_col)
+        retrieved = r.get(retrieved_col) or []
+
+        pred_trunc  = [truncate_code(pred,  lvl) for lvl in range(1, 6)]
+        label_trunc = [truncate_code(label, lvl) for lvl in range(1, 6)]
+        label_in_ret = [check_label_in_retrieved(label, retrieved, lvl) for lvl in range(1, 6)]
+
+        preprocessed.append({
+            "pred_trunc":    pred_trunc,
+            "label_trunc":   label_trunc,
+            "label_in_ret":  label_in_ret,
+            "is_parsed":     r.get(parsed_col) == True,
+            "is_codable":    r.get(codable_col) == True,
+            "confidence":    r.get(confidence_col) or 0,
+            "label_prefix":  str(label)[:2] if label else None,
+        })
+
+    # ------------------------------------------------------------------
+    # 2. Pre-build filter groups once
+    # ------------------------------------------------------------------
+    filter_groups = {
+        "all_raw":            preprocessed,
+        "all_parsed":         [p for p in preprocessed if p["is_parsed"]],
+        "codable_only":       [p for p in preprocessed if p["is_codable"]],
+        "parsed_and_codable": [p for p in preprocessed if p["is_parsed"] and p["is_codable"]],
+        "threshold":          [p for p in preprocessed if p["is_parsed"] and p["is_codable"] and p["confidence"] >= threshold],
     }
-    
-    # Define filter types
-    filter_types = ['all_raw', 'all_parsed', 'codable_only', 'parsed_and_codable', 'threshold']
-    
-    # Initialize overall results
-    for filter_type in filter_types:
-        results['overall'][filter_type] = {}
-    
-    # Calculate overall metrics for each filter type
-    for filter_type in filter_types:
-        filtered_records = filter_records(
-            records, 
-            parsed_col, 
-            codable_col, 
-            filter_type,
-            confidence_col,
-            threshold
-        )
-        
-        results['overall'][filter_type]['n_samples'] = len(filtered_records)
-        
-        # Calculate accuracy at each hierarchical level
-        for level in range(1, 6):
-            (
-                overall_acc,
-                result_list,
-                retrieval_acc,
-                generation_acc_when_retrieved,
-                label_in_retrieved_list
-            ) = calculate_accuracy_at_level(
-                filtered_records,
-                predicted_col,
-                label_col,
-                level,
-                retrieved_col
+
+    # ------------------------------------------------------------------
+    # 3. Helper: single pass over a group, all levels at once
+    # ------------------------------------------------------------------
+    def _metrics_for_group(group: list) -> dict:
+        result = {"n_samples": len(group)}
+        for l_idx in range(5):
+            correct = total = correct_when_ret = total_when_ret = 0
+            for p in group:
+                is_correct = p["pred_trunc"][l_idx] == p["label_trunc"][l_idx]
+                in_ret = p["label_in_ret"][l_idx]
+                total += 1
+                correct += is_correct
+                if in_ret:
+                    total_when_ret += 1
+                    correct_when_ret += is_correct
+            lvl = l_idx + 1
+            result[f"level_{lvl}"] = correct / total if total else 0.0
+            result[f"level_{lvl}_retrieval_accuracy"] = (
+                sum(p["label_in_ret"][l_idx] for p in group) / len(group) if group else 0.0
             )
-            
-            results['overall'][filter_type][f'level_{level}'] = overall_acc
-            results['overall'][filter_type][f'level_{level}_retrieval_accuracy'] = retrieval_acc
-            results['overall'][filter_type][f'level_{level}_generation_accuracy_when_retrieved'] = generation_acc_when_retrieved
-    
-    # Calculate metrics by product type if requested
+            result[f"level_{lvl}_generation_accuracy_when_retrieved"] = (
+                correct_when_ret / total_when_ret if total_when_ret else 0.0
+            )
+        return result
+
+    # ------------------------------------------------------------------
+    # 4. Overall metrics
+    # ------------------------------------------------------------------
+    results: Dict = {"overall": {}, "by_product_type": {}}
+    for filter_type, group in filter_groups.items():
+        results["overall"][filter_type] = _metrics_for_group(group)
+
+    # ------------------------------------------------------------------
+    # 5. By product type (reuse pre-filtered groups)
+    # ------------------------------------------------------------------
     if by_product_type:
-        # Extract unique product type prefixes (first 2 digits of COICOP code)
-        product_types = set()
-        for record in records:
-            if label_col in record and record[label_col]:
-                code = str(record[label_col])
-                if len(code) >= 2:
-                    product_types.add(code[:2])
-        
-        product_types = sorted(product_types)
-        
-        # For each product type
+        product_types = sorted(
+            {p["label_prefix"] for p in preprocessed if p["label_prefix"]}
+        )
         for product_type in product_types:
-            results['by_product_type'][product_type] = {}
-            
-            # Filter records for this product type
-            type_records = [
-                r for r in records 
-                if label_col in r and r[label_col] and str(r[label_col]).startswith(product_type)
-            ]
-            
-            # Calculate metrics for each filter type
-            for filter_type in filter_types:
-                results['by_product_type'][product_type][filter_type] = {}
-                
-                filtered_records = filter_records(
-                    type_records, 
-                    parsed_col, 
-                    codable_col, 
-                    filter_type,
-                    confidence_col,
-                    threshold
+            results["by_product_type"][product_type] = {}
+            for filter_type, group in filter_groups.items():
+                pt_group = [p for p in group if p["label_prefix"] == product_type]
+                results["by_product_type"][product_type][filter_type] = (
+                    _metrics_for_group(pt_group) if pt_group
+                    else {
+                        "n_samples": 0,
+                        **{
+                            k: None
+                            for lvl in range(1, 6)
+                            for k in (
+                                f"level_{lvl}",
+                                f"level_{lvl}_retrieval_accuracy",
+                                f"level_{lvl}_generation_accuracy_when_retrieved",
+                            )
+                        },
+                    }
                 )
-                
-                results['by_product_type'][product_type][filter_type]['n_samples'] = len(filtered_records)
-                
-                # Calculate accuracy at each hierarchical level
-                for level in range(1, 6):
-                    if len(filtered_records) > 0:
-                        (
-                            overall_acc,
-                            result_list,
-                            retrieval_acc,
-                            generation_acc_when_retrieved,
-                            label_in_retrieved_list
-                        ) = calculate_accuracy_at_level(
-                            filtered_records,
-                            predicted_col,
-                            label_col,
-                            level,
-                            retrieved_col
-                        )
-                        
-                        results['by_product_type'][product_type][filter_type][f'level_{level}'] = overall_acc
-                        results['by_product_type'][product_type][filter_type][f'level_{level}_retrieval_accuracy'] = retrieval_acc
-                        results['by_product_type'][product_type][filter_type][f'level_{level}_generation_accuracy_when_retrieved'] = generation_acc_when_retrieved
-                    else:
-                        # No samples for this combination
-                        results['by_product_type'][product_type][filter_type][f'level_{level}'] = None
-                        results['by_product_type'][product_type][filter_type][f'level_{level}_retrieval_accuracy'] = None
-                        results['by_product_type'][product_type][filter_type][f'level_{level}_generation_accuracy_when_retrieved'] = None
-    
+
     return results
 
 
