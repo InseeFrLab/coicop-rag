@@ -9,10 +9,10 @@ Must be run after 0_prunning_coicop.py (requires the mapping table on S3).
 import argparse
 import logging
 
-import duckdb
 import yaml
 
 from coicop_rag.data.pruning import prune_annotation_lvl4
+from coicop_rag.utils import create_duckdb_connection
 
 
 def main():
@@ -32,7 +32,7 @@ def main():
     logger.info("STARTING ANNOTATION PRUNING PIPELINE")
     logger.info("=" * 80)
 
-    con = duckdb.connect(database=":memory:")
+    con = create_duckdb_connection()
 
     # -----------------------------------------------------------------------
     # Load mapping table and raw notices (needed for label lookup)

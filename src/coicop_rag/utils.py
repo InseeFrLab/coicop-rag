@@ -1,8 +1,35 @@
+import os
 import re
 import yaml
 from typing import List, Tuple, Dict, Optional
 import pandas as pd
 import unicodedata
+import duckdb
+
+
+def create_duckdb_connection() -> duckdb.DuckDBPyConnection:
+    """
+    Create a DuckDB in-memory connection configured for S3/MinIO access.
+
+    Reads AWS credentials from environment variables and configures the
+    httpfs extension with the SSP Cloud MinIO endpoint when
+    AWS_S3_ENDPOINT is set.
+
+    Returns:
+        Configured DuckDB connection.
+    """
+    con = duckdb.connect(database=":memory:")
+
+    endpoint = os.environ.get("AWS_S3_ENDPOINT")
+    if endpoint:
+        con.sql(f"SET s3_endpoint='{endpoint}'")
+        con.sql("SET s3_url_style='path'")
+
+    region = os.environ.get("AWS_DEFAULT_REGION")
+    if region:
+        con.sql(f"SET s3_region='{region}'")
+
+    return con
 
 
 def merge_eval_and_retreived(

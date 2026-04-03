@@ -10,11 +10,10 @@ Must be run after 0_prune_annotations.py.
 import argparse
 import logging
 
-import duckdb
 import pandas as pd
 import yaml
 
-from coicop_rag.utils import apply_rules, load_rules
+from coicop_rag.utils import apply_rules, create_duckdb_connection, load_rules
 
 
 def main():
@@ -34,7 +33,7 @@ def main():
     logger.info("STARTING RULE-BASED SPLIT")
     logger.info("=" * 80)
 
-    con = duckdb.connect(database=":memory:")
+    con = create_duckdb_connection()
 
     # ------------------------------------------------------------------
     # Load pruned annotations

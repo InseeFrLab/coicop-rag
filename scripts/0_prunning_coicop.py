@@ -7,9 +7,8 @@ the filtered notices and mapping table to S3.
 import argparse
 import logging
 import yaml
-import duckdb
-
 from coicop_rag.data.pruning import prune_linear_hierarchies
+from coicop_rag.utils import create_duckdb_connection
 
 
 def main():
@@ -29,7 +28,7 @@ def main():
     logger.info("STARTING COICOP PRUNING PIPELINE")
     logger.info("=" * 80)
 
-    con = duckdb.connect(database=":memory:")
+    con = create_duckdb_connection()
 
     logger.info("Loading raw COICOP notices...")
     notices_raw = con.sql(

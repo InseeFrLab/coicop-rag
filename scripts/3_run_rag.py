@@ -19,7 +19,7 @@ import subprocess
 import random
 
 from coicop_rag.data.parsing import extract_json_from_response
-from coicop_rag.utils import merge_eval_and_retreived
+from coicop_rag.utils import create_duckdb_connection, merge_eval_and_retreived
 from coicop_rag.eval.metrics import (
     compute_hierarchical_metrics,
     calculate_accuracy_at_level,
@@ -407,7 +407,7 @@ def initialize_clients(config):
     
     # DuckDB connection
     logger.info("  → Connecting to DuckDB...")
-    con = duckdb.connect(database=":memory:")
+    con = create_duckdb_connection()
     
     # Qdrant connection
     logger.info("  → Connecting to Qdrant...")
