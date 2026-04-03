@@ -40,7 +40,7 @@ annotations:
     - budget
     - n_obs
     - source
-  nature: manual_from_book
+  nature: null
 
 predictions:
   s3_path: "s3://projet-budget-famille/data/workflow_outputs/outputs_rag/predictions_{timestamp}.parquet"
