@@ -4,6 +4,7 @@ metadata:
   generateName: pipeline-
 spec:
   entrypoint: pipeline
+  serviceAccountName: workflow
 
   podSpecPatch: |
     containers:
@@ -303,7 +304,7 @@ spec:
             fi
 
             if [ -n "{{inputs.parameters.model-name}}" ]; then
-              ARGS="$ARGS --model-name {{inputs.parameters.model-name}}"
+              ARGS="$ARGS --model_name {{inputs.parameters.model-name}}"
             fi
 
             uv run scripts/3_run_rag.py $ARGS

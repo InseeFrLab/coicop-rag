@@ -299,7 +299,7 @@ def setup_argument_parser():
     
     # Model parameters
     parser.add_argument(
-        '--model-name',
+        '--model_name',
         type=str,
         help='LLM model name (overrides config)'
     )
@@ -311,41 +311,41 @@ def setup_argument_parser():
     )
     
     parser.add_argument(
-        '--max-tokens',
+        '--max_tokens',
         type=int,
         help='Maximum tokens for LLM generation (overrides config)'
     )
     
     # Retrieval parameters
     parser.add_argument(
-        '--retrieval-size',
+        '--retrieval_size',
         type=int,
         help='Number of documents to retrieve (overrides config)'
     )
     
     # Data parameters
     parser.add_argument(
-        '--collection-name',
+        '--collection_name',
         type=str,
         help='Qdrant collection name (overrides config)'
     )
     
     parser.add_argument(
-        '--nature-annotation',
+        '--nature_annotation',
         type=str,
         help='Type of annotation to filter (overrides config)'
     )
     
     # Evaluation parameters
     parser.add_argument(
-        '--threshold-confidence',
+        '--threshold_confidence',
         type=float,
         help='Confidence threshold for evaluation (overrides config)'
     )
     
     # MLflow parameters
     parser.add_argument(
-        '--experiment-name',
+        '--experiment_name',
         type=str,
         help='MLflow experiment name (overrides config)'
     )
