@@ -1,4 +1,24 @@
 # config.yaml
+
+annotations:
+  s3_path: "s3://projet-budget-famille/data/output-annotation-consolidated/annotations-consolidated-2026-03-26/raw_test.parquet"
+  s3_path_pruned: "s3://projet-budget-famille/data/workflow_outputs/prunning/raw_test_pruned.parquet"
+  s3_path_regex: "s3://projet-budget-famille/data/workflow_outputs/outputs_regex/raw_test_pruned_regex.parquet"
+  s3_path_rag: "s3://projet-budget-famille/data/workflow_outputs/outputs_regex/raw_test_pruned_noregex.parquet"
+  sample_size: 20
+  features:
+    - id
+    - l_pr_product
+    - annee
+    - code
+    - coicop
+    - shop
+    - shop_type_name
+    - budget
+    - n_obs
+    - source
+  nature: manual_from_book
+
 qdrant:
   strategy: "with_hierarchy"
   collection_name: "coicop_trunc_prun"
@@ -14,33 +34,17 @@ retrieval:
 llm:
   prompt_name: prompt-multi-level
   prompt_version: "10"
-  model_name: openai/gpt-oss-120b
+  model_name: openai/gpt-oss-120b #google/gemma-3-27b-it
   temperature: 0.1
   max_tokens: 2048
+  concurrency: 4
+  # guided_decoding_backend: xgrammar  # uncomment if vLLM >= 0.6 (outlines removed)
 
 coicop:
   path_raw: "s3://projet-budget-famille/data/coicop-2018_envoi_rmes_20251022.csv"
   path_prunned_lvl4: "s3://projet-budget-famille/data/workflow_outputs/prunning/coicop-2018_envoi_rmes_20251022_prunned_lvl4.parquet"
   path_mapping_lvl4: "s3://projet-budget-famille/data/workflow_outputs/prunning/coicop-2018_envoi_rmes_20251022_mapping_prunning_lvl4.parquet"
 
-annotations:
-  s3_path: "s3://projet-budget-famille/data/output-annotation-consolidated/annotations-consolidated-2026-03-26/raw_test.parquet"
-  s3_path_pruned: "s3://projet-budget-famille/data/workflow_outputs/prunning/raw_test_pruned.parquet"
-  s3_path_regex: "s3://projet-budget-famille/data/workflow_outputs/outputs_regex/raw_test_pruned_regex.parquet"
-  s3_path_rag: "s3://projet-budget-famille/data/workflow_outputs/outputs_regex/raw_test_pruned_noregex.parquet"
-  sample_size: null
-  features:
-    - id
-    - l_pr_product
-    - annee
-    - code
-    - coicop
-    - shop
-    - shop_type_name
-    - budget
-    - n_obs
-    - source
-  nature: manual_from_book
 
 predictions:
   s3_path: "s3://projet-budget-famille/data/workflow_outputs/outputs_rag/predictions_{timestamp}.parquet"
