@@ -19,7 +19,7 @@ import subprocess
 import random
 
 from coicop_rag.data.parsing import extract_json_from_response
-from coicop_rag.utils import create_duckdb_connection, merge_eval_and_retreived
+from coicop_rag.utils import create_duckdb_connection, merge_eval_and_retreived, truncate_code
 from coicop_rag.eval.metrics import (
     compute_hierarchical_metrics,
     calculate_accuracy_at_level,
@@ -140,7 +140,12 @@ def main():
         log_prompts_sample(messages, n=6)
         
         # Step 4: Generate LLM responses
-        llm_responses = generate_llm_responses(messages, client_vllm_gen, config)
+        llm_responses = generate_llm_responses(
+            messages,
+            client_vllm_gen,
+            config,
+            concurrency=config["llm"].get("concurrency", 8),
+        )
         
         # Step 5: Parse responses
         llm_responses_parsed, n_parse_errors = parse_llm_responses(llm_responses)
@@ -151,6 +156,8 @@ def main():
             llm_responses_parsed=llm_responses_parsed,
             searched_products=searched_products_rag,
             qdrant_results_codes=qdrant_results_codes,
+            con=con,
+            path_mapping_lvl4=config["coicop"]["path_mapping_lvl4"],
         )
 
         # Step 7: Export RAG predictions
@@ -760,18 +767,29 @@ def create_evaluation_dataframe(
         llm_responses_parsed,
         searched_products,
         qdrant_results_codes,
+        con,
+        path_mapping_lvl4: str,
     ):
     """
     Create evaluation dataframe combining predictions and ground truth.
 
-    Annotations are already truncated and pruned (by 3_prune_annotations.py),
-    and RAG predictions are drawn from the pruned vector DB, so no further
-    truncation or pruning is needed here.
+    The new vector DB contains all COICOP codes (unpruned, levels 1-5), so
+    LLM predictions can be at any level. This function:
+      1. Truncates ``code_predict`` to level 4  → stored in ``code_predict``.
+      2. Applies the pruning mapping table to the truncated code
+         → stored in ``code_predict_tprune``.
+
+    The ground-truth ``code`` column in the annotations is already pruned
+    (produced by the upstream pruning step).
 
     Args:
-        llm_responses_parsed: Parsed LLM responses
-        searched_products: Original product data with pruned annotations
-        qdrant_results_codes: Retrieved COICOP codes
+        llm_responses_parsed: Parsed LLM responses.
+        searched_products: Original product data with pruned annotations.
+        qdrant_results_codes: Retrieved COICOP codes.
+        con: Active DuckDB connection (used to load the mapping table).
+        path_mapping_lvl4: S3 path to the level-4 pruning mapping parquet.
+            Expected columns: ``code`` (level-4 code) and
+            ``code_parent_equivalent`` (its pruned equivalent).
 
     Returns:
         tuple: (evaluation_df, retrieved_codes_df)
@@ -786,6 +804,21 @@ def create_evaluation_dataframe(
 
     df_eval = pd.DataFrame(rows)
     df_eval["method"] = "rag-notices"
+
+    # ── 1. Truncate predictions to level 4 ───────────────────────────────────
+    df_eval["code_predict"] = df_eval["code_predict"].apply(
+        lambda c: truncate_code(c, level=4)
+    )
+
+    # ── 2. Apply pruning mapping ──────────────────────────────────────────────
+    mapping = con.sql(
+        f"SELECT code, code_parent_equivalent FROM read_parquet('{path_mapping_lvl4}')"
+    ).df()
+    code_to_pruned = mapping.set_index("code")["code_parent_equivalent"].to_dict()
+
+    df_eval["code_predict_tprune"] = df_eval["code_predict"].apply(
+        lambda c: code_to_pruned.get(c, c)   # keep as-is if not in mapping
+    )
 
     df_retrieved_codes = pd.DataFrame(qdrant_results_codes)
     df_retrieved_codes.columns = df_retrieved_codes.columns.astype(str)
