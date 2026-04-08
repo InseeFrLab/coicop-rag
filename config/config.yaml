@@ -5,7 +5,7 @@ annotations:
   s3_path_pruned: "s3://projet-budget-famille/data/workflow_outputs/prunning/raw_test_pruned.parquet"
   s3_path_regex: "s3://projet-budget-famille/data/workflow_outputs/outputs_regex/raw_test_pruned_regex.parquet"
   s3_path_rag: "s3://projet-budget-famille/data/workflow_outputs/outputs_regex/raw_test_pruned_noregex.parquet"
-  sample_size: 20
+  sample_size: 200
   features:
     - id
     - l_pr_product
@@ -21,7 +21,7 @@ annotations:
 
 qdrant:
   strategy: "with_hierarchy"
-  collection_name: "coicop_trunc_prun"
+  collection_name: "coicop_lineage"
   upload_batch_size: 56
 
 embedding:
@@ -37,7 +37,7 @@ llm:
   model_name: openai/gpt-oss-120b #google/gemma-3-27b-it
   temperature: 0.1
   max_tokens: 2048
-  concurrency: 4
+  concurrency: 16
   # guided_decoding_backend: xgrammar  # uncomment if vLLM >= 0.6 (outlines removed)
 
 coicop:

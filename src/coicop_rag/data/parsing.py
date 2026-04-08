@@ -1,14 +1,6 @@
 import json
 import re
-from typing import Dict, Any, Optional
-from pydantic import BaseModel
-
-
-class ReponseFormat(BaseModel):
-    codable: bool
-    code_predict: Optional[str] = None
-    confidence: float
-    reasons: str
+from typing import Dict, Any
 
 
 def extract_json_from_response(response: str) -> Dict[str, Any]:

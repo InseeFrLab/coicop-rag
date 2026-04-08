@@ -744,15 +744,39 @@ def parse_llm_responses(llm_responses):
     logger.info("Parsing LLM responses...")
     
     llm_responses_parsed = []
-    
-    for llm_response in llm_responses:
-        content = llm_response.choices[0].message.content
-        try:
-            llm_responses_parsed.append(extract_json_from_response(content))
-        except Exception as e:
-            logger.warning(f"Parsing error: {e}")
+
+    for idx, llm_response in enumerate(llm_responses):
+        # Case 1: generation failed (worker returned None)
+        if llm_response is None:
+            logger.warning("Response %d is None (generation failed)", idx)
             llm_responses_parsed.append({'parsed': False})
-    
+            continue
+
+        content = llm_response.choices[0].message.content or ""
+        # "stop"   → model finished normally
+        # "length" → truncated by max_tokens (JSON is likely incomplete)
+        finish_reason = llm_response.choices[0].finish_reason
+
+        try:
+            parsed = extract_json_from_response(content)
+
+            # Case 2: extract_json_from_response did not raise but failed to
+            # parse the JSON (returns {'parsed': False})
+            if not parsed.get('parsed', False):
+                logger.warning(
+                    "Response %d not parsed — finish_reason=%s — content: %r",
+                    idx, finish_reason, content[:200],
+                )
+            llm_responses_parsed.append(parsed)
+
+        except Exception as e:
+            # Case 3: unexpected exception during parsing
+            logger.warning(
+                "Response %d parsing exception: %s — finish_reason=%s — content: %r",
+                idx, e, finish_reason, content[:200],
+            )
+            llm_responses_parsed.append({'parsed': False})
+
     parse_errors = sum(dic == {'parsed': False} for dic in llm_responses_parsed)
     
     logger.info(
