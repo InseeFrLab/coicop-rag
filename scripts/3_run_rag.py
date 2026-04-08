@@ -840,12 +840,19 @@ def create_evaluation_dataframe(
     ).df()
     code_to_pruned = mapping.set_index("code")["code_parent_equivalent"].to_dict()
 
-    df_eval["code_predict_tprune"] = df_eval["code_predict"].apply(
+    df_eval["code_predict"] = df_eval["code_predict"].apply(
         lambda c: code_to_pruned.get(c, c)   # keep as-is if not in mapping
     )
 
+    # ── 3. Build retrieved codes dataframe, truncated and pruned ─────────────
+    def _truncate_and_prune(code: str) -> str:
+        return code_to_pruned.get(truncate_code(code, level=4), truncate_code(code, level=4))
+
     df_retrieved_codes = pd.DataFrame(qdrant_results_codes)
     df_retrieved_codes.columns = df_retrieved_codes.columns.astype(str)
+    code_cols = [c for c in df_retrieved_codes.columns if c != "id"]
+    for col in code_cols:
+        df_retrieved_codes[col] = df_retrieved_codes[col].apply(_truncate_and_prune)
     df_retrieved_codes["id"] = df_eval["id"]
 
     logger.info(f"✓ Evaluation dataset created: {len(df_eval)} rows")
