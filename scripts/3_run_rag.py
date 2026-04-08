@@ -11,6 +11,10 @@ import argparse
 from tqdm import tqdm
 import duckdb
 import pandas as pd
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy as np
 from qdrant_client import QdrantClient
 from openai import OpenAI
 from langfuse import Langfuse
@@ -159,6 +163,11 @@ def main():
             con=con,
             path_mapping_lvl4=config["coicop"]["path_mapping_lvl4"],
         )
+
+        # Step 6b: Plot confidence vs accuracy
+        fig = plot_confidence_vs_accuracy(df_eval, level=4)
+        mlflow.log_figure(fig, "confidence_vs_accuracy.png")
+        plt.close(fig)
 
         # Step 7: Export RAG predictions
         eval_path, retrieved_path = export_predictions(
@@ -863,6 +872,92 @@ def create_evaluation_dataframe(
   
 
 
+def plot_confidence_vs_accuracy(df_eval: pd.DataFrame, level: int = 4) -> plt.Figure:
+    """
+    Plot confidence (from LLM) against prediction accuracy at a given COICOP level.
+
+    Produces two vertically stacked subplots:
+      - Top: accuracy per confidence bin (bar chart)
+      - Bottom: number of predictions per bin (histogram)
+
+    Only rows with parsed=True and codable=True are included.
+
+    Args:
+        df_eval: Evaluation dataframe with columns 'confidence', 'code_predict',
+                 'code', 'parsed', 'codable'.
+        level: COICOP level at which to evaluate accuracy.
+
+    Returns:
+        matplotlib Figure
+    """
+    df = df_eval.copy()
+
+    # Keep only parsed rows (codable is not filtered here)
+    mask = df.get("parsed", pd.Series(True, index=df.index)) == True
+    df = df[mask].copy()
+
+    if df.empty:
+        fig, ax = plt.subplots()
+        ax.text(0.5, 0.5, "No data (parsed)", ha="center", va="center")
+        return fig
+
+    # Correct prediction at the requested level
+    df["correct"] = df.apply(
+        lambda r: truncate_code(str(r["code_predict"]), level) == truncate_code(str(r["code"]), level),
+        axis=1,
+    )
+    df["confidence"] = pd.to_numeric(df["confidence"], errors="coerce")
+    df = df.dropna(subset=["confidence"])
+
+    bins = np.arange(0.0, 1.05, 0.1)
+    bin_labels = [f"{b:.1f}–{b+0.1:.1f}" for b in bins[:-1]]
+    df["bin"] = pd.cut(df["confidence"], bins=bins, labels=bin_labels, include_lowest=True)
+
+    grouped = df.groupby("bin", observed=False)["correct"]
+    accuracy = grouped.mean()
+    counts = grouped.count()
+    proportions = counts / counts.sum()
+
+    # Drop bins with no data for display
+    has_data = counts > 0
+    accuracy = accuracy[has_data]
+    counts = counts[has_data]
+    proportions = proportions[has_data]
+    x_labels = list(accuracy.index.astype(str))
+
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 7), sharex=True,
+                                    gridspec_kw={"height_ratios": [3, 1]})
+    fig.suptitle(f"Confidence vs Accuracy (level {level})", fontsize=13, fontweight="bold")
+
+    # Top: accuracy bars
+    colors = ["#d9534f" if v < 0.5 else "#5cb85c" if v >= 0.7 else "#f0ad4e"
+              for v in accuracy.values]
+    bars = ax1.bar(x_labels, accuracy.values, color=colors, edgecolor="white", width=0.8)
+    ax1.set_ylim(0, 1.05)
+    ax1.set_ylabel("Accuracy")
+    ax1.axhline(accuracy.mean(), color="steelblue", linestyle="--", linewidth=1.2,
+                label=f"Mean accuracy = {accuracy.mean():.2f}")
+    ax1.legend(fontsize=9)
+    ax1.yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: f"{y:.0%}"))
+    for bar, val in zip(bars, accuracy.values):
+        if not np.isnan(val):
+            ax1.text(bar.get_x() + bar.get_width() / 2, val + 0.02,
+                     f"{val:.0%}", ha="center", va="bottom", fontsize=8)
+
+    # Bottom: proportion histogram
+    ax2.bar(x_labels, proportions.values, color="steelblue", edgecolor="white", width=0.8, alpha=0.7)
+    ax2.set_ylabel("Proportion")
+    ax2.set_xlabel("Confidence bin")
+    ax2.yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: f"{y:.0%}"))
+    for bar, val in zip(ax2.patches, proportions.values):
+        ax2.text(bar.get_x() + bar.get_width() / 2, val + 0.003,
+                 f"{val:.0%}", ha="center", va="bottom", fontsize=8)
+
+    plt.xticks(rotation=30, ha="right")
+    fig.tight_layout()
+    return fig
+
+
 def export_predictions(con, df_eval, df_retrieved_codes, config, timestamp):
     """
     Export predictions to S3
@@ -973,6 +1068,25 @@ def get_tricky_errors(
     config,
     level,
 ):
+    """
+    Return a random sample of hard prediction errors for qualitative analysis.
+
+    "Hard" errors are wrong predictions on products that are:
+      - codable (the LLM flagged them as codable)
+      - not in the uncodable/misc categories (codes starting with 98 or 99)
+
+    Args:
+        sample_size: Maximum number of errors to return.
+        df_eval: Evaluation dataframe (predictions + annotations).
+        df_retrieved_codes: Retrieved codes dataframe.
+        config: Configuration dictionary (used for retrieval_size).
+        level: COICOP level at which to evaluate correctness.
+
+    Returns:
+        DataFrame with columns: l_pr_product, shop, code, code_predict,
+        confidence, codable, budget, in_retrieved.
+    """
+    # Merge predictions with retrieved codes into flat records
     records = merge_eval_and_retreived(
         df_eval=df_eval,
         retrieved_codes=df_retrieved_codes,
@@ -981,6 +1095,7 @@ def get_tricky_errors(
         col_retrieved_codes_name="list_retrieved_codes",
     )
 
+    # Identify which records are wrong at the requested level
     (
         overall_accuracy,
         result_list,
@@ -995,13 +1110,14 @@ def get_tricky_errors(
         retrieved_col="list_retrieved_codes"
     )
 
+    # Keep only wrong predictions on codable, non-misc products
     errors_list = [x for x, m in zip(records, result_list) if not m]
     codable_errors = [x for x in errors_list if x["codable"]]
     real_errors = [x for x in codable_errors if (x["code"][:2] not in ("98", "99"))]
 
     keys_to_keep = [
         "l_pr_product", "shop", "code",
-        "code_predict", "confidence", "budget",
+        "code_predict", "confidence", "codable", "budget",
         "in_retrieved"
     ]
     sample_size = min(sample_size, len(real_errors))
