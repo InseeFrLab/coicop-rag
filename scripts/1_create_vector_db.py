@@ -54,15 +54,20 @@ def main():
     )
 
     # -----------------------------------------------------------------------
-    # Load pruned COICOP notices
+    # Load COICOP notices
     # -----------------------------------------------------------------------
 
     logger.info("=" * 80)
     logger.info("STEP 1: LOADING COICOP NOTICES")
     logger.info("=" * 80)
 
+    vectors_cfg = config["coicop"].get("vectors", {})
+    truncate_level = vectors_cfg.get("truncate_level")
+    prune = vectors_cfg.get("prune", False)
+    logger.info(f"  truncate_level={truncate_level}, prune={prune}")
+
     notices_df = con.sql(
-        f"SELECT * FROM read_parquet('{config['coicop']['path_prunned_lvl4']}')"
+        f"SELECT * FROM read_csv_auto('{config['coicop']['path_raw']}')"
     ).to_df()
 
     columns_to_keep = [
@@ -70,8 +75,30 @@ def main():
         if "column" not in col.lower() and not col.endswith("_en")
     ]
     notices_df = notices_df[columns_to_keep]
+    logger.info(f"  → {len(notices_df)} notices loaded from path_raw")
+
+    # Apply truncation: keep codes whose depth (number of dot-separated parts) <= truncate_level
+    if truncate_level is not None:
+        before = len(notices_df)
+        notices_df = notices_df[
+            notices_df["code"].apply(lambda c: len(str(c).split(".")) <= truncate_level)
+        ]
+        logger.info(f"  → {len(notices_df)} notices after truncation to level {truncate_level} (dropped {before - len(notices_df)})")
+
+    # Apply pruning: keep only canonical codes (code == code_parent_equivalent in mapping)
+    if prune:
+        mapping_df = con.sql(
+            f"SELECT code, code_parent_equivalent FROM read_parquet('{config['coicop']['path_mapping_lvl4']}')"
+        ).to_df()
+        canonical_codes = set(
+            mapping_df.loc[mapping_df["code"] == mapping_df["code_parent_equivalent"], "code"]
+        )
+        before = len(notices_df)
+        notices_df = notices_df[notices_df["code"].isin(canonical_codes)]
+        logger.info(f"  → {len(notices_df)} notices after pruning (dropped {before - len(notices_df)} non-canonical codes)")
+
     notices = notices_df.to_dict(orient="records")
-    logger.info(f"✓ {len(notices)} notices loaded")
+    logger.info(f"✓ {len(notices)} notices ready")
 
     # -----------------------------------------------------------------------
     # Enrich with parent lineage
