@@ -490,10 +490,11 @@ def print_metrics_report(metrics: Dict[str, Dict[str, float]]) -> None:
 
 
 def write_metrics_report(
-    metrics: Dict[str, Dict[str, float]], 
+    metrics: Dict[str, Dict[str, float]],
     output_path: str,
     include_product_types: bool = True,
-    include_comparison: bool = True
+    include_comparison: bool = True,
+    by_nature_metrics: Optional[Dict[str, Dict]] = None,
 ) -> None:
     """
     Write a formatted report of the metrics including retrieval analysis to a text file
@@ -503,6 +504,8 @@ def write_metrics_report(
         output_path: Path to the output .txt file
         include_product_types: If True, include detailed metrics for each product type
         include_comparison: If True, include comparison tables across product types
+        by_nature_metrics: Optional dict {nature: metrics_dict} for per-nature breakdown.
+            Only written when multiple natures are present (caller's responsibility).
     """
     with open(output_path, 'w', encoding='utf-8') as f:
         f.write("=" * 100 + "\n")
@@ -536,6 +539,38 @@ def write_metrics_report(
                     f"{gen_acc:<20.4f}\n"
                 )
         
+        # ========== BY ANNOTATION NATURE ==========
+        if by_nature_metrics:
+            f.write("\n\n")
+            f.write("█" * 100 + "\n")
+            f.write("OVERALL METRICS BY ANNOTATION NATURE\n")
+            f.write("█" * 100 + "\n")
+
+            for nature, nature_metrics in sorted(by_nature_metrics.items()):
+                f.write(f"\n{'▓' * 100}\n")
+                f.write(f"NATURE: {nature}\n")
+                f.write(f"{'▓' * 100}\n")
+
+                for filter_type, values in nature_metrics["overall"].items():
+                    f.write(f"\n{'─' * 100}\n")
+                    f.write(f"Metric Type: {filter_type.upper().replace('_', ' ')}\n")
+                    f.write(f"{'─' * 100}\n")
+                    f.write(f"Number of samples: {values['n_samples']}\n")
+                    f.write("\n")
+                    f.write(f"{'Level':<8} {'Overall Acc':<15} {'Retrieval Acc':<18} {'Gen Acc (Retrieved)':<20}\n")
+                    f.write(f"{'-'*8} {'-'*15} {'-'*18} {'-'*20}\n")
+
+                    for level in range(1, 6):
+                        overall_acc = values[f'level_{level}']
+                        retrieval_acc = values[f'level_{level}_retrieval_accuracy']
+                        gen_acc = values[f'level_{level}_generation_accuracy_when_retrieved']
+                        f.write(
+                            f"{level:<8} "
+                            f"{overall_acc:<15.4f} "
+                            f"{retrieval_acc:<18.4f} "
+                            f"{gen_acc:<20.4f}\n"
+                        )
+
         # ========== PRODUCT TYPE COMPARISON ==========
         if include_comparison and 'by_product_type' in metrics and metrics['by_product_type']:
             f.write("\n\n")

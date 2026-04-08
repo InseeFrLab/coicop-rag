@@ -183,7 +183,7 @@ def main():
         
         # Step 8: Compute and log metrics
 
-        metrics = compute_and_log_metrics(
+        metrics, by_nature_metrics = compute_and_log_metrics(
             df_eval,
             df_retrieved_codes,
             config,
@@ -217,7 +217,8 @@ def main():
             metrics=metrics,
             output_path="report.txt",
             include_product_types=True,
-            include_comparison=True
+            include_comparison=True,
+            by_nature_metrics=by_nature_metrics,
             )
         
         mlflow.log_artifact("report.txt", artifact_path="reports")
@@ -1024,13 +1025,17 @@ def compute_and_log_metrics(df_eval, df_retrieved_codes, config):
     """
     Compute evaluation metrics and log to MLflow.
 
+    Also computes metrics broken down by annotation nature (``source`` column)
+    if more than one nature is present in df_eval.
+
     Args:
         df_eval: Evaluation dataframe
         df_retrieved_codes: Retrieved codes dataframe
         config: Configuration dictionary
 
     Returns:
-        dict: Computed metrics
+        tuple: (metrics, by_nature_metrics) where by_nature_metrics is a
+        dict {nature: metrics_dict} or None if only one nature is present.
     """
     logger.info("=" * 80)
     logger.info("STEP 7: COMPUTING METRICS")
@@ -1056,9 +1061,28 @@ def compute_and_log_metrics(df_eval, df_retrieved_codes, config):
     metrics_mlflow = flatten_metrics(metrics, include_product_types=False)
     mlflow.log_metrics(metrics_mlflow)
 
+    # Per-nature metrics (only if multiple natures present)
+    by_nature_metrics = None
+    if "source" in df_eval.columns:
+        natures = df_eval["source"].dropna().unique().tolist()
+        if len(natures) > 1:
+            logger.info(f"  → Computing metrics per annotation nature: {natures}")
+            by_nature_metrics = {}
+            for nature in sorted(natures):
+                nature_ids = set(df_eval.loc[df_eval["source"] == nature, "id"])
+                nature_records = [r for r in records if r.get("id") in nature_ids]
+                by_nature_metrics[nature] = compute_hierarchical_metrics(
+                    records=nature_records,
+                    threshold=config["eval"]["threshold_confidence"],
+                    predicted_col="code_predict",
+                    label_col="code",
+                    retrieved_col="list_retrieved_codes",
+                    by_product_type=False,
+                )
+
     logger.info("✓ Metrics computed and logged")
 
-    return metrics
+    return metrics, by_nature_metrics
 
 
 def get_tricky_errors(
