@@ -654,10 +654,12 @@ def prepare_prompts(searched_products, qdrant_results_texts, qdrant_results_code
     
     for i, searched_product in enumerate(searched_products):
         # Include store information if available
-        if searched_product["shop"]:
+        shop = searched_product.get("shop") or None
+        shop_type = searched_product.get("shop_type_name") or None
+        if shop:
+            shop_info = f"{shop} (type d'enseigne : {shop_type})" if shop_type else shop
             enseigne_bloc = (
-                f"# Pour information, ce produit a été acheté dans cette enseigne : "
-                f"{searched_product['shop']}"
+                f"# Pour information, ce produit a été acheté dans cette enseigne : {shop_info}"
             )
         else:
             enseigne_bloc = None
