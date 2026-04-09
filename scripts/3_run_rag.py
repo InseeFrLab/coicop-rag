@@ -893,13 +893,15 @@ def plot_confidence_vs_accuracy(df_eval: pd.DataFrame, level: int = 4) -> plt.Fi
     """
     df = df_eval.copy()
 
-    # Keep only parsed rows (codable is not filtered here)
+    # Filter to parsed & codable rows
     mask = df.get("parsed", pd.Series(True, index=df.index)) == True
+    if "codable" in df.columns:
+        mask &= df["codable"] == True
     df = df[mask].copy()
 
     if df.empty:
         fig, ax = plt.subplots()
-        ax.text(0.5, 0.5, "No data (parsed)", ha="center", va="center")
+        ax.text(0.5, 0.5, "No data (parsed & codable)", ha="center", va="center")
         return fig
 
     # Correct prediction at the requested level
@@ -909,6 +911,9 @@ def plot_confidence_vs_accuracy(df_eval: pd.DataFrame, level: int = 4) -> plt.Fi
     )
     df["confidence"] = pd.to_numeric(df["confidence"], errors="coerce")
     df = df.dropna(subset=["confidence"])
+
+    # Weighted mean accuracy (computed on all rows, not as mean of bin means)
+    overall_accuracy = df["correct"].mean()
 
     bins = np.arange(0.0, 1.05, 0.1)
     bin_labels = [f"{b:.1f}–{b+0.1:.1f}" for b in bins[:-1]]
@@ -928,7 +933,10 @@ def plot_confidence_vs_accuracy(df_eval: pd.DataFrame, level: int = 4) -> plt.Fi
 
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 7), sharex=True,
                                     gridspec_kw={"height_ratios": [3, 1]})
-    fig.suptitle(f"Confidence vs Accuracy (level {level})", fontsize=13, fontweight="bold")
+    fig.suptitle(
+        f"Confidence vs Accuracy (level {level}) — parsed & codable (n={len(df)})",
+        fontsize=13, fontweight="bold"
+    )
 
     # Top: accuracy bars
     colors = ["#d9534f" if v < 0.5 else "#5cb85c" if v >= 0.7 else "#f0ad4e"
@@ -936,8 +944,8 @@ def plot_confidence_vs_accuracy(df_eval: pd.DataFrame, level: int = 4) -> plt.Fi
     bars = ax1.bar(x_labels, accuracy.values, color=colors, edgecolor="white", width=0.8)
     ax1.set_ylim(0, 1.05)
     ax1.set_ylabel("Accuracy")
-    ax1.axhline(accuracy.mean(), color="steelblue", linestyle="--", linewidth=1.2,
-                label=f"Mean accuracy = {accuracy.mean():.2f}")
+    ax1.axhline(overall_accuracy, color="steelblue", linestyle="--", linewidth=1.2,
+                label=f"Overall accuracy = {overall_accuracy:.2%}")
     ax1.legend(fontsize=9)
     ax1.yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: f"{y:.0%}"))
     for bar, val in zip(bars, accuracy.values):

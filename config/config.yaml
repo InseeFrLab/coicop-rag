@@ -5,7 +5,7 @@ annotations:
   s3_path_pruned: "s3://projet-budget-famille/data/workflow_outputs/prunning/raw_test_pruned.parquet"
   s3_path_regex: "s3://projet-budget-famille/data/workflow_outputs/outputs_regex/raw_test_pruned_regex.parquet"
   s3_path_rag: "s3://projet-budget-famille/data/workflow_outputs/outputs_regex/raw_test_pruned_noregex.parquet"
-  sample_size: 200
+  sample_size: null
   features:
     - id
     - l_pr_product
@@ -17,7 +17,7 @@ annotations:
     - budget
     - n_obs
     - source
-  nature: manual_from_book
+  nature: null
 
 qdrant:
   strategy: "with_hierarchy"
