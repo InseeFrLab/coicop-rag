@@ -11,6 +11,10 @@ import argparse
 from tqdm import tqdm
 import duckdb
 import pandas as pd
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy as np
 from qdrant_client import QdrantClient
 from openai import OpenAI
 from langfuse import Langfuse
@@ -160,6 +164,11 @@ def main():
             path_mapping_lvl4=config["coicop"]["path_mapping_lvl4"],
         )
 
+        # Step 6b: Plot confidence vs accuracy
+        fig = plot_confidence_vs_accuracy(df_eval, level=4)
+        mlflow.log_figure(fig, "confidence_vs_accuracy.png")
+        plt.close(fig)
+
         # Step 7: Export RAG predictions
         eval_path, retrieved_path = export_predictions(
             con,
@@ -174,7 +183,7 @@ def main():
         
         # Step 8: Compute and log metrics
 
-        metrics = compute_and_log_metrics(
+        metrics, by_nature_metrics = compute_and_log_metrics(
             df_eval,
             df_retrieved_codes,
             config,
@@ -208,7 +217,8 @@ def main():
             metrics=metrics,
             output_path="report.txt",
             include_product_types=True,
-            include_comparison=True
+            include_comparison=True,
+            by_nature_metrics=by_nature_metrics,
             )
         
         mlflow.log_artifact("report.txt", artifact_path="reports")
@@ -654,10 +664,12 @@ def prepare_prompts(searched_products, qdrant_results_texts, qdrant_results_code
     
     for i, searched_product in enumerate(searched_products):
         # Include store information if available
-        if searched_product["shop"]:
+        shop = searched_product.get("shop") or None
+        shop_type = searched_product.get("shop_type_name") or None
+        if shop:
+            shop_info = f"{shop} (type d'enseigne : {shop_type})" if shop_type else shop
             enseigne_bloc = (
-                f"# Pour information, ce produit a été acheté dans cette enseigne : "
-                f"{searched_product['shop']}"
+                f"# Pour information, ce produit a été acheté dans cette enseigne : {shop_info}"
             )
         else:
             enseigne_bloc = None
@@ -744,15 +756,39 @@ def parse_llm_responses(llm_responses):
     logger.info("Parsing LLM responses...")
     
     llm_responses_parsed = []
-    
-    for llm_response in llm_responses:
-        content = llm_response.choices[0].message.content
-        try:
-            llm_responses_parsed.append(extract_json_from_response(content))
-        except Exception as e:
-            logger.warning(f"Parsing error: {e}")
+
+    for idx, llm_response in enumerate(llm_responses):
+        # Case 1: generation failed (worker returned None)
+        if llm_response is None:
+            logger.warning("Response %d is None (generation failed)", idx)
             llm_responses_parsed.append({'parsed': False})
-    
+            continue
+
+        content = llm_response.choices[0].message.content or ""
+        # "stop"   → model finished normally
+        # "length" → truncated by max_tokens (JSON is likely incomplete)
+        finish_reason = llm_response.choices[0].finish_reason
+
+        try:
+            parsed = extract_json_from_response(content)
+
+            # Case 2: extract_json_from_response did not raise but failed to
+            # parse the JSON (returns {'parsed': False})
+            if not parsed.get('parsed', False):
+                logger.warning(
+                    "Response %d not parsed — finish_reason=%s — content: %r",
+                    idx, finish_reason, content[:200],
+                )
+            llm_responses_parsed.append(parsed)
+
+        except Exception as e:
+            # Case 3: unexpected exception during parsing
+            logger.warning(
+                "Response %d parsing exception: %s — finish_reason=%s — content: %r",
+                idx, e, finish_reason, content[:200],
+            )
+            llm_responses_parsed.append({'parsed': False})
+
     parse_errors = sum(dic == {'parsed': False} for dic in llm_responses_parsed)
     
     logger.info(
@@ -816,18 +852,119 @@ def create_evaluation_dataframe(
     ).df()
     code_to_pruned = mapping.set_index("code")["code_parent_equivalent"].to_dict()
 
-    df_eval["code_predict_tprune"] = df_eval["code_predict"].apply(
+    df_eval["code_predict"] = df_eval["code_predict"].apply(
         lambda c: code_to_pruned.get(c, c)   # keep as-is if not in mapping
     )
 
+    # ── 3. Build retrieved codes dataframe, truncated and pruned ─────────────
+    def _truncate_and_prune(code: str) -> str:
+        return code_to_pruned.get(truncate_code(code, level=4), truncate_code(code, level=4))
+
     df_retrieved_codes = pd.DataFrame(qdrant_results_codes)
     df_retrieved_codes.columns = df_retrieved_codes.columns.astype(str)
+    code_cols = [c for c in df_retrieved_codes.columns if c != "id"]
+    for col in code_cols:
+        df_retrieved_codes[col] = df_retrieved_codes[col].apply(_truncate_and_prune)
     df_retrieved_codes["id"] = df_eval["id"]
 
     logger.info(f"✓ Evaluation dataset created: {len(df_eval)} rows")
 
     return df_eval, df_retrieved_codes
   
+
+
+def plot_confidence_vs_accuracy(df_eval: pd.DataFrame, level: int = 4) -> plt.Figure:
+    """
+    Plot confidence (from LLM) against prediction accuracy at a given COICOP level.
+
+    Produces two vertically stacked subplots:
+      - Top: accuracy per confidence bin (bar chart)
+      - Bottom: number of predictions per bin (histogram)
+
+    Only rows with parsed=True and codable=True are included.
+
+    Args:
+        df_eval: Evaluation dataframe with columns 'confidence', 'code_predict',
+                 'code', 'parsed', 'codable'.
+        level: COICOP level at which to evaluate accuracy.
+
+    Returns:
+        matplotlib Figure
+    """
+    df = df_eval.copy()
+
+    # Filter to parsed & codable rows
+    mask = df.get("parsed", pd.Series(True, index=df.index)) == True
+    if "codable" in df.columns:
+        mask &= df["codable"] == True
+    df = df[mask].copy()
+
+    if df.empty:
+        fig, ax = plt.subplots()
+        ax.text(0.5, 0.5, "No data (parsed & codable)", ha="center", va="center")
+        return fig
+
+    # Correct prediction at the requested level
+    df["correct"] = df.apply(
+        lambda r: truncate_code(str(r["code_predict"]), level) == truncate_code(str(r["code"]), level),
+        axis=1,
+    )
+    df["confidence"] = pd.to_numeric(df["confidence"], errors="coerce")
+    df = df.dropna(subset=["confidence"])
+
+    # Weighted mean accuracy (computed on all rows, not as mean of bin means)
+    overall_accuracy = df["correct"].mean()
+
+    bins = np.arange(0.0, 1.05, 0.1)
+    bin_labels = [f"{b:.1f}–{b+0.1:.1f}" for b in bins[:-1]]
+    df["bin"] = pd.cut(df["confidence"], bins=bins, labels=bin_labels, include_lowest=True)
+
+    grouped = df.groupby("bin", observed=False)["correct"]
+    accuracy = grouped.mean()
+    counts = grouped.count()
+    proportions = counts / counts.sum()
+
+    # Drop bins with no data for display
+    has_data = counts > 0
+    accuracy = accuracy[has_data]
+    counts = counts[has_data]
+    proportions = proportions[has_data]
+    x_labels = list(accuracy.index.astype(str))
+
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 7), sharex=True,
+                                    gridspec_kw={"height_ratios": [3, 1]})
+    fig.suptitle(
+        f"Confidence vs Accuracy (level {level}) — parsed & codable (n={len(df)})",
+        fontsize=13, fontweight="bold"
+    )
+
+    # Top: accuracy bars
+    colors = ["#d9534f" if v < 0.5 else "#5cb85c" if v >= 0.7 else "#f0ad4e"
+              for v in accuracy.values]
+    bars = ax1.bar(x_labels, accuracy.values, color=colors, edgecolor="white", width=0.8)
+    ax1.set_ylim(0, 1.05)
+    ax1.set_ylabel("Accuracy")
+    ax1.axhline(overall_accuracy, color="steelblue", linestyle="--", linewidth=1.2,
+                label=f"Overall accuracy = {overall_accuracy:.2%}")
+    ax1.legend(fontsize=9)
+    ax1.yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: f"{y:.0%}"))
+    for bar, val in zip(bars, accuracy.values):
+        if not np.isnan(val):
+            ax1.text(bar.get_x() + bar.get_width() / 2, val + 0.02,
+                     f"{val:.0%}", ha="center", va="bottom", fontsize=8)
+
+    # Bottom: proportion histogram
+    ax2.bar(x_labels, proportions.values, color="steelblue", edgecolor="white", width=0.8, alpha=0.7)
+    ax2.set_ylabel("Proportion")
+    ax2.set_xlabel("Confidence bin")
+    ax2.yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: f"{y:.0%}"))
+    for bar, val in zip(ax2.patches, proportions.values):
+        ax2.text(bar.get_x() + bar.get_width() / 2, val + 0.003,
+                 f"{val:.0%}", ha="center", va="bottom", fontsize=8)
+
+    plt.xticks(rotation=30, ha="right")
+    fig.tight_layout()
+    return fig
 
 
 def export_predictions(con, df_eval, df_retrieved_codes, config, timestamp):
@@ -896,13 +1033,17 @@ def compute_and_log_metrics(df_eval, df_retrieved_codes, config):
     """
     Compute evaluation metrics and log to MLflow.
 
+    Also computes metrics broken down by annotation nature (``source`` column)
+    if more than one nature is present in df_eval.
+
     Args:
         df_eval: Evaluation dataframe
         df_retrieved_codes: Retrieved codes dataframe
         config: Configuration dictionary
 
     Returns:
-        dict: Computed metrics
+        tuple: (metrics, by_nature_metrics) where by_nature_metrics is a
+        dict {nature: metrics_dict} or None if only one nature is present.
     """
     logger.info("=" * 80)
     logger.info("STEP 7: COMPUTING METRICS")
@@ -928,9 +1069,28 @@ def compute_and_log_metrics(df_eval, df_retrieved_codes, config):
     metrics_mlflow = flatten_metrics(metrics, include_product_types=False)
     mlflow.log_metrics(metrics_mlflow)
 
+    # Per-nature metrics (only if multiple natures present)
+    by_nature_metrics = None
+    if "source" in df_eval.columns:
+        natures = df_eval["source"].dropna().unique().tolist()
+        if len(natures) > 1:
+            logger.info(f"  → Computing metrics per annotation nature: {natures}")
+            by_nature_metrics = {}
+            for nature in sorted(natures):
+                nature_ids = set(df_eval.loc[df_eval["source"] == nature, "id"])
+                nature_records = [r for r in records if r.get("id") in nature_ids]
+                by_nature_metrics[nature] = compute_hierarchical_metrics(
+                    records=nature_records,
+                    threshold=config["eval"]["threshold_confidence"],
+                    predicted_col="code_predict",
+                    label_col="code",
+                    retrieved_col="list_retrieved_codes",
+                    by_product_type=False,
+                )
+
     logger.info("✓ Metrics computed and logged")
 
-    return metrics
+    return metrics, by_nature_metrics
 
 
 def get_tricky_errors(
@@ -940,6 +1100,25 @@ def get_tricky_errors(
     config,
     level,
 ):
+    """
+    Return a random sample of hard prediction errors for qualitative analysis.
+
+    "Hard" errors are wrong predictions on products that are:
+      - codable (the LLM flagged them as codable)
+      - not in the uncodable/misc categories (codes starting with 98 or 99)
+
+    Args:
+        sample_size: Maximum number of errors to return.
+        df_eval: Evaluation dataframe (predictions + annotations).
+        df_retrieved_codes: Retrieved codes dataframe.
+        config: Configuration dictionary (used for retrieval_size).
+        level: COICOP level at which to evaluate correctness.
+
+    Returns:
+        DataFrame with columns: l_pr_product, shop, code, code_predict,
+        confidence, codable, budget, in_retrieved.
+    """
+    # Merge predictions with retrieved codes into flat records
     records = merge_eval_and_retreived(
         df_eval=df_eval,
         retrieved_codes=df_retrieved_codes,
@@ -948,6 +1127,7 @@ def get_tricky_errors(
         col_retrieved_codes_name="list_retrieved_codes",
     )
 
+    # Identify which records are wrong at the requested level
     (
         overall_accuracy,
         result_list,
@@ -962,13 +1142,14 @@ def get_tricky_errors(
         retrieved_col="list_retrieved_codes"
     )
 
+    # Keep only wrong predictions on codable, non-misc products
     errors_list = [x for x, m in zip(records, result_list) if not m]
     codable_errors = [x for x in errors_list if x["codable"]]
     real_errors = [x for x in codable_errors if (x["code"][:2] not in ("98", "99"))]
 
     keys_to_keep = [
         "l_pr_product", "shop", "code",
-        "code_predict", "confidence", "budget",
+        "code_predict", "confidence", "codable", "budget",
         "in_retrieved"
     ]
     sample_size = min(sample_size, len(real_errors))

@@ -49,7 +49,6 @@ class ReponseFormat(BaseModel):
     codable: bool
     code_predict: Optional[str] = None
     confidence: float
-    reasons: str
 
 # ---------------------------------------------------------------------------
 # Retry predicate – does not retry on 4xx "business" errors (bad request,
