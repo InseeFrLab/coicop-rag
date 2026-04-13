@@ -26,11 +26,7 @@ from coicop_rag.eval.metrics import (
   calculate_accuracy_at_level, 
 )
 
-from coicop_rag.utils import (
-  merge_eval_and_retreived, 
-  apply_rules, 
-  load_rules
-)
+from coicop_rag.utils import merge_eval_and_retreived
 
 pd.reset_option("display.max_colwidth")
 pd.set_option('display.max_rows', None)
