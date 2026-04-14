@@ -31,7 +31,7 @@ spec:
     #
     #                    ┌──→ prune-coicop ──→ create-vector-db ──┐  (skippable)
     #   preprocessing ──┤                                         ├──→ run-rag
-    #                    └──→ prune-annotations ─────────────────┘
+    #                    └──→ codif-regex ──→ prune-annotations ──┘
     # -----------------------------------------------------------------------
     - name: pipeline
       dag:
@@ -42,11 +42,12 @@ spec:
           - name: prune-coicop
             dependencies: [preprocessing]
             template: prune-coicop
-            when: "{{workflow.parameters.skip-vector-db}} != \"true\""
+            when: "\"{{workflow.parameters.skip-vector-db}}\" != \"true\""
             arguments:
               parameters:
                 - name: config
                   value: "{{workflow.parameters.config}}"
+
 
           - name: prune-annotations
             dependencies: [preprocessing]
@@ -56,10 +57,14 @@ spec:
                 - name: config
                   value: "{{workflow.parameters.config}}"
 
+          - name: codif-regex
+            dependencies: [codif-regex]
+            template: codif-regex
+
           - name: create-vector-db
             dependencies: [prune-coicop]
             template: create-vector-db
-            when: "{{workflow.parameters.skip-vector-db}} != \"true\""
+            when: "\"{{workflow.parameters.skip-vector-db}}\" != \"true\""
             arguments:
               parameters:
                 - name: config
@@ -90,6 +95,53 @@ spec:
             git clone --branch main https://git.lab.sspcloud.fr/ssplab/experimentation-bdf/construction-dataset.git repo && cd repo
             uv sync
             uv run main.py
+        env:
+          - name: AWS_ACCESS_KEY_ID
+            valueFrom:
+              secretKeyRef:
+                name: secret-codif-coicop-bdf
+                key: AWS_ACCESS_KEY_ID
+          - name: AWS_SECRET_ACCESS_KEY
+            valueFrom:
+              secretKeyRef:
+                name: secret-codif-coicop-bdf
+                key: AWS_SECRET_ACCESS_KEY
+          - name: AWS_SESSION_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: secret-codif-coicop-bdf
+                key: AWS_SESSION_TOKEN
+          - name: AWS_S3_ENDPOINT
+            valueFrom:
+              secretKeyRef:
+                name: secret-codif-coicop-bdf
+                key: AWS_S3_ENDPOINT
+          - name: AWS_ENDPOINT_URL
+            valueFrom:
+              secretKeyRef:
+                name: secret-codif-coicop-bdf
+                key: AWS_ENDPOINT_URL
+        resources:
+          requests:
+            memory: 2Gi
+            cpu: 100m
+          limits:
+            memory: 50Gi
+            cpu: 15000m
+
+    # -----------------------------------------------------------------------
+    # Step 0b: Codification par regex
+    # -----------------------------------------------------------------------
+    - name: codif-regex
+      container:
+        image: inseefrlab/onyxia-vscode-python:py3.13.12
+        command: [sh, -c]
+        args:
+          - |
+            set -e
+            git clone --branch main https://git.lab.sspcloud.fr/ssplab/experimentation-bdf/regex_codif.git repo && cd repo
+            uv sync
+            uv run src/main.py
         env:
           - name: AWS_ACCESS_KEY_ID
             valueFrom:
