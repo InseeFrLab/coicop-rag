@@ -12,8 +12,6 @@ spec:
         env:
           - name: AWS_DEFAULT_REGION
             value: "us-east-1"
-          - name: AWS_S3_ENDPOINT
-            value: "minio.lab.sspcloud.fr"
 
   arguments:
     parameters:
@@ -23,13 +21,15 @@ spec:
         value: ""
       - name: model-name
         value: ""
+      - name: skip-vector-db
+        value: "false"
 
   templates:
 
     # -----------------------------------------------------------------------
     # Main pipeline: DAG with parallelism
     #
-    #                    ┌──→ prune-coicop ──→ create-vector-db ──┐
+    #                    ┌──→ prune-coicop ──→ create-vector-db ──┐  (skippable)
     #   preprocessing ──┤                                         ├──→ run-rag
     #                    └──→ prune-annotations ─────────────────┘
     # -----------------------------------------------------------------------
@@ -42,6 +42,7 @@ spec:
           - name: prune-coicop
             dependencies: [preprocessing]
             template: prune-coicop
+            when: "{{workflow.parameters.skip-vector-db}} != \"true\""
             arguments:
               parameters:
                 - name: config
@@ -58,6 +59,7 @@ spec:
           - name: create-vector-db
             dependencies: [prune-coicop]
             template: create-vector-db
+            when: "{{workflow.parameters.skip-vector-db}} != \"true\""
             arguments:
               parameters:
                 - name: config
@@ -92,27 +94,27 @@ spec:
           - name: AWS_ACCESS_KEY_ID
             valueFrom:
               secretKeyRef:
-                name: secret-rag
+                name: secret-codif-coicop-bdf
                 key: AWS_ACCESS_KEY_ID
           - name: AWS_SECRET_ACCESS_KEY
             valueFrom:
               secretKeyRef:
-                name: secret-rag
+                name: secret-codif-coicop-bdf
                 key: AWS_SECRET_ACCESS_KEY
           - name: AWS_SESSION_TOKEN
             valueFrom:
               secretKeyRef:
-                name: secret-rag
+                name: secret-codif-coicop-bdf
                 key: AWS_SESSION_TOKEN
           - name: AWS_S3_ENDPOINT
             valueFrom:
               secretKeyRef:
-                name: secret-rag
+                name: secret-codif-coicop-bdf
                 key: AWS_S3_ENDPOINT
           - name: AWS_ENDPOINT_URL
             valueFrom:
               secretKeyRef:
-                name: secret-rag
+                name: secret-codif-coicop-bdf
                 key: AWS_ENDPOINT_URL
         resources:
           requests:
@@ -141,22 +143,22 @@ spec:
           - name: AWS_ACCESS_KEY_ID
             valueFrom:
               secretKeyRef:
-                name: secret-rag
+                name: secret-codif-coicop-bdf
                 key: AWS_ACCESS_KEY_ID
           - name: AWS_SECRET_ACCESS_KEY
             valueFrom:
               secretKeyRef:
-                name: secret-rag
+                name: secret-codif-coicop-bdf
                 key: AWS_SECRET_ACCESS_KEY
           - name: AWS_SESSION_TOKEN
             valueFrom:
               secretKeyRef:
-                name: secret-rag
+                name: secret-codif-coicop-bdf
                 key: AWS_SESSION_TOKEN
           - name: DDC_ENCRYPTION_KEY
             valueFrom:
               secretKeyRef:
-                name: secret-rag
+                name: secret-codif-coicop-bdf
                 key: DDC_ENCRYPTION_KEY
         resources:
           requests:
@@ -185,22 +187,22 @@ spec:
           - name: AWS_ACCESS_KEY_ID
             valueFrom:
               secretKeyRef:
-                name: secret-rag
+                name: secret-codif-coicop-bdf
                 key: AWS_ACCESS_KEY_ID
           - name: AWS_SECRET_ACCESS_KEY
             valueFrom:
               secretKeyRef:
-                name: secret-rag
+                name: secret-codif-coicop-bdf
                 key: AWS_SECRET_ACCESS_KEY
           - name: AWS_SESSION_TOKEN
             valueFrom:
               secretKeyRef:
-                name: secret-rag
+                name: secret-codif-coicop-bdf
                 key: AWS_SESSION_TOKEN
           - name: DDC_ENCRYPTION_KEY
             valueFrom:
               secretKeyRef:
-                name: secret-rag
+                name: secret-codif-coicop-bdf
                 key: DDC_ENCRYPTION_KEY
         resources:
           requests:
@@ -229,47 +231,47 @@ spec:
           - name: AWS_ACCESS_KEY_ID
             valueFrom:
               secretKeyRef:
-                name: secret-rag
+                name: secret-codif-coicop-bdf
                 key: AWS_ACCESS_KEY_ID
           - name: AWS_SECRET_ACCESS_KEY
             valueFrom:
               secretKeyRef:
-                name: secret-rag
+                name: secret-codif-coicop-bdf
                 key: AWS_SECRET_ACCESS_KEY
           - name: AWS_SESSION_TOKEN
             valueFrom:
               secretKeyRef:
-                name: secret-rag
+                name: secret-codif-coicop-bdf
                 key: AWS_SESSION_TOKEN
           - name: DDC_ENCRYPTION_KEY
             valueFrom:
               secretKeyRef:
-                name: secret-rag
+                name: secret-codif-coicop-bdf
                 key: DDC_ENCRYPTION_KEY
           - name: VLLM_EMBEDDING_URL
             valueFrom:
               secretKeyRef:
-                name: secret-rag
+                name: secret-codif-coicop-bdf
                 key: VLLM_EMBEDDING_URL
           - name: VLLM_EMBEDDING_API_KEY
             valueFrom:
               secretKeyRef:
-                name: secret-rag
+                name: secret-codif-coicop-bdf
                 key: VLLM_EMBEDDING_API_KEY
           - name: QDRANT_URL
             valueFrom:
               secretKeyRef:
-                name: secret-rag
+                name: secret-codif-coicop-bdf
                 key: QDRANT_URL
           - name: QDRANT_API_KEY
             valueFrom:
               secretKeyRef:
-                name: secret-rag
+                name: secret-codif-coicop-bdf
                 key: QDRANT_API_KEY
           - name: QDRANT_API_PORT
             valueFrom:
               secretKeyRef:
-                name: secret-rag
+                name: secret-codif-coicop-bdf
                 key: QDRANT_API_PORT
         resources:
           requests:
@@ -312,97 +314,97 @@ spec:
           - name: LANGFUSE_BASE_URL
             valueFrom:
               secretKeyRef:
-                name: secret-rag
+                name: secret-codif-coicop-bdf
                 key: LANGFUSE_BASE_URL
           - name: LANGFUSE_PUBLIC_KEY
             valueFrom:
               secretKeyRef:
-                name: secret-rag
+                name: secret-codif-coicop-bdf
                 key: LANGFUSE_PUBLIC_KEY
           - name: LANGFUSE_SECRET_KEY
             valueFrom:
               secretKeyRef:
-                name: secret-rag
+                name: secret-codif-coicop-bdf
                 key: LANGFUSE_SECRET_KEY
           - name: MLFLOW_TRACKING_URI
             valueFrom:
               secretKeyRef:
-                name: secret-rag
+                name: secret-codif-coicop-bdf
                 key: MLFLOW_TRACKING_URI
           - name: MLFLOW_TRACKING_USERNAME
             valueFrom:
               secretKeyRef:
-                name: secret-rag
+                name: secret-codif-coicop-bdf
                 key: MLFLOW_TRACKING_USERNAME
           - name: MLFLOW_TRACKING_PASSWORD
             valueFrom:
               secretKeyRef:
-                name: secret-rag
+                name: secret-codif-coicop-bdf
                 key: MLFLOW_TRACKING_PASSWORD
           - name: OLLAMA_API_KEY
             valueFrom:
               secretKeyRef:
-                name: secret-rag
+                name: secret-codif-coicop-bdf
                 key: OLLAMA_API_KEY
           - name: OLLAMA_URL
             valueFrom:
               secretKeyRef:
-                name: secret-rag
+                name: secret-codif-coicop-bdf
                 key: OLLAMA_URL
           - name: QDRANT_URL
             valueFrom:
               secretKeyRef:
-                name: secret-rag
+                name: secret-codif-coicop-bdf
                 key: QDRANT_URL
           - name: QDRANT_API_KEY
             valueFrom:
               secretKeyRef:
-                name: secret-rag
+                name: secret-codif-coicop-bdf
                 key: QDRANT_API_KEY
           - name: QDRANT_API_PORT
             valueFrom:
               secretKeyRef:
-                name: secret-rag
+                name: secret-codif-coicop-bdf
                 key: QDRANT_API_PORT
           - name: VLLM_EMBEDDING_URL
             valueFrom:
               secretKeyRef:
-                name: secret-rag
+                name: secret-codif-coicop-bdf
                 key: VLLM_EMBEDDING_URL
           - name: VLLM_EMBEDDING_API_KEY
             valueFrom:
               secretKeyRef:
-                name: secret-rag
+                name: secret-codif-coicop-bdf
                 key: VLLM_EMBEDDING_API_KEY
           - name: VLLM_GENERATION_URL
             valueFrom:
               secretKeyRef:
-                name: secret-rag
+                name: secret-codif-coicop-bdf
                 key: VLLM_GENERATION_URL
           - name: VLLM_GENERATION_API_KEY
             valueFrom:
               secretKeyRef:
-                name: secret-rag
+                name: secret-codif-coicop-bdf
                 key: VLLM_GENERATION_API_KEY
           - name: AWS_ACCESS_KEY_ID
             valueFrom:
               secretKeyRef:
-                name: secret-rag
+                name: secret-codif-coicop-bdf
                 key: AWS_ACCESS_KEY_ID
           - name: AWS_SECRET_ACCESS_KEY
             valueFrom:
               secretKeyRef:
-                name: secret-rag
+                name: secret-codif-coicop-bdf
                 key: AWS_SECRET_ACCESS_KEY
           - name: AWS_SESSION_TOKEN
             valueFrom:
               secretKeyRef:
-                name: secret-rag
+                name: secret-codif-coicop-bdf
                 key: AWS_SESSION_TOKEN
           - name: DDC_ENCRYPTION_KEY
             valueFrom:
               secretKeyRef:
-                name: secret-rag
+                name: secret-codif-coicop-bdf
                 key: DDC_ENCRYPTION_KEY
         resources:
           requests:
