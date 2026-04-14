@@ -29,8 +29,8 @@ spec:
     # -----------------------------------------------------------------------
     # Main pipeline: DAG with parallelism
     #
-    #   prune-coicop ──→ create-vector-db ──────────────┐
-    #              └──→ prune-annotations ──→ split-rules ──┘──→ run-rag
+    #   prune-coicop ──→ create-vector-db ──┐
+    #              └──→ prune-annotations ──┘──→ run-rag
     # -----------------------------------------------------------------------
     - name: pipeline
       dag:
@@ -58,16 +58,8 @@ spec:
                 - name: config
                   value: "{{workflow.parameters.config}}"
 
-          - name: split-rules
-            dependencies: [prune-annotations]
-            template: split-rules
-            arguments:
-              parameters:
-                - name: config
-                  value: "{{workflow.parameters.config}}"
-
           - name: run-rag
-            dependencies: [create-vector-db, split-rules]
+            dependencies: [create-vector-db, prune-annotations]
             template: run-rag
             arguments:
               parameters:
@@ -167,51 +159,7 @@ spec:
             cpu: 15000m
 
     # -----------------------------------------------------------------------
-    # Step 3: Split annotations by coding method (regex vs RAG)
-    # -----------------------------------------------------------------------
-    - name: split-rules
-      inputs:
-        parameters:
-          - name: config
-      container:
-        image: inseefrlab/onyxia-vscode-python:py3.13.12
-        command: [sh, -c]
-        args:
-          - |
-            set -e
-            git clone --branch dev https://github.com/InseeFrLab/coicop-rag.git repo && cd repo
-            uv run scripts/2_split_rules.py --config {{inputs.parameters.config}}
-        env:
-          - name: AWS_ACCESS_KEY_ID
-            valueFrom:
-              secretKeyRef:
-                name: secret-rag
-                key: AWS_ACCESS_KEY_ID
-          - name: AWS_SECRET_ACCESS_KEY
-            valueFrom:
-              secretKeyRef:
-                name: secret-rag
-                key: AWS_SECRET_ACCESS_KEY
-          - name: AWS_SESSION_TOKEN
-            valueFrom:
-              secretKeyRef:
-                name: secret-rag
-                key: AWS_SESSION_TOKEN
-          - name: DDC_ENCRYPTION_KEY
-            valueFrom:
-              secretKeyRef:
-                name: secret-rag
-                key: DDC_ENCRYPTION_KEY
-        resources:
-          requests:
-            memory: 2Gi
-            cpu: 100m
-          limits:
-            memory: 50Gi
-            cpu: 15000m
-
-    # -----------------------------------------------------------------------
-    # Step 4: Create vector database
+    # Step 2b: Create vector database
     # -----------------------------------------------------------------------
     - name: create-vector-db
       inputs:
@@ -224,7 +172,7 @@ spec:
           - |
             set -e
             git clone --branch dev https://github.com/InseeFrLab/coicop-rag.git repo && cd repo
-            uv run scripts/1_create_vector_db.py --config {{inputs.parameters.config}}
+            uv run scripts/0_create_vector_db.py --config {{inputs.parameters.config}}
         env:
           - name: AWS_ACCESS_KEY_ID
             valueFrom:
@@ -280,7 +228,7 @@ spec:
             cpu: 15000m
 
     # -----------------------------------------------------------------------
-    # Step 4: Run RAG pipeline
+    # Step 3: Run RAG pipeline
     # -----------------------------------------------------------------------
     - name: run-rag
       inputs:
@@ -307,7 +255,7 @@ spec:
               ARGS="$ARGS --model_name {{inputs.parameters.model-name}}"
             fi
 
-            uv run scripts/3_run_rag.py $ARGS
+            uv run scripts/2_run_rag.py $ARGS
         env:
           - name: LANGFUSE_BASE_URL
             valueFrom:
