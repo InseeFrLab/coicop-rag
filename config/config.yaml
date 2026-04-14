@@ -2,9 +2,7 @@
 
 annotations:
   s3_path: "s3://projet-budget-famille/data/regex/output/raw_test_without_regex.parquet"
-  s3_path_pruned: "s3://projet-budget-famille/data/workflow_outputs/prunning/raw_test_without_regex_pruned.parquet"
-  s3_path_regex: "s3://projet-budget-famille/data/workflow_outputs/outputs_regex/raw_test_pruned_regex.parquet"
-  s3_path_rag: "s3://projet-budget-famille/data/workflow_outputs/outputs_regex/raw_test_without_regex_pruned_noregex.parquet"
+  s3_path_rag: "s3://projet-budget-famille/data/workflow_outputs/prunning/raw_test_without_regex_pruned.parquet"
   sample_size: null
   features:
     - id

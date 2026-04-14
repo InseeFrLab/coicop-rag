@@ -90,7 +90,7 @@ def main():
     logger.info("STEP 3: EXPORTING PRUNED ANNOTATIONS")
     logger.info("=" * 80)
 
-    output_path = config["annotations"]["s3_path_pruned"]
+    output_path = config["annotations"]["s3_path_rag"]
     con.sql(f"""
         COPY annotations
         TO '{output_path}'
