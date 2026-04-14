@@ -15,8 +15,6 @@ spec:
 
   arguments:
     parameters:
-      - name: config
-        value: config/config.yaml
       - name: sample_size
         value: ""
       - name: model-name
@@ -31,7 +29,8 @@ spec:
     #
     #                    ┌──→ prune-coicop ──→ create-vector-db ──┐  (skippable)
     #   preprocessing ──┤                                         ├──→ run-rag
-    #                    └──→ codif-regex ──→ prune-annotations ──┘
+    #                    └──→ prune-annotations ──→ codif-regex ──┘
+    #                                                └──→ codif-lcs
     # -----------------------------------------------------------------------
     - name: pipeline
       dag:
@@ -43,40 +42,29 @@ spec:
             dependencies: [preprocessing]
             template: prune-coicop
             when: "\"{{workflow.parameters.skip-vector-db}}\" != \"true\""
-            arguments:
-              parameters:
-                - name: config
-                  value: "{{workflow.parameters.config}}"
 
+          - name: codif-regex
+            dependencies: [prune-annotations]
+            template: codif-regex
 
           - name: prune-annotations
             dependencies: [preprocessing]
             template: prune-annotations
-            arguments:
-              parameters:
-                - name: config
-                  value: "{{workflow.parameters.config}}"
 
-          - name: codif-regex
+          - name: codif-lcs
             dependencies: [codif-regex]
-            template: codif-regex
+            template: codif-lcs
 
           - name: create-vector-db
             dependencies: [prune-coicop]
             template: create-vector-db
             when: "\"{{workflow.parameters.skip-vector-db}}\" != \"true\""
-            arguments:
-              parameters:
-                - name: config
-                  value: "{{workflow.parameters.config}}"
 
           - name: run-rag
-            dependencies: [create-vector-db, prune-annotations]
+            dependencies: [create-vector-db, codif-regex]
             template: run-rag
             arguments:
               parameters:
-                - name: config
-                  value: "{{workflow.parameters.config}}"
                 - name: sample_size
                   value: "{{workflow.parameters.sample_size}}"
                 - name: model-name
@@ -177,12 +165,59 @@ spec:
             cpu: 15000m
 
     # -----------------------------------------------------------------------
+    # Step 0c: Codification par LCS
+    # -----------------------------------------------------------------------
+    - name: codif-lcs
+      container:
+        image: inseefrlab/onyxia-vscode-r-python-julia:r4.5.3-py3.13.12
+        command: [sh, -c]
+        args:
+          - |
+            set -e
+            git clone --branch main https://git.lab.sspcloud.fr/ssplab/experimentation-bdf/stats-annotations.git repo && cd repo
+            Rscript R/main.R
+        env:
+          - name: AWS_ACCESS_KEY_ID
+            valueFrom:
+              secretKeyRef:
+                name: secret-codif-coicop-bdf
+                key: AWS_ACCESS_KEY_ID
+          - name: AWS_SECRET_ACCESS_KEY
+            valueFrom:
+              secretKeyRef:
+                name: secret-codif-coicop-bdf
+                key: AWS_SECRET_ACCESS_KEY
+          - name: AWS_SESSION_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: secret-codif-coicop-bdf
+                key: AWS_SESSION_TOKEN
+          - name: AWS_S3_ENDPOINT
+            valueFrom:
+              secretKeyRef:
+                name: secret-codif-coicop-bdf
+                key: AWS_S3_ENDPOINT
+          - name: AWS_ENDPOINT_URL
+            valueFrom:
+              secretKeyRef:
+                name: secret-codif-coicop-bdf
+                key: AWS_ENDPOINT_URL
+        resources:
+          requests:
+            memory: 2Gi
+            cpu: 100m
+          limits:
+            memory: 50Gi
+            cpu: 15000m
+
+    # -----------------------------------------------------------------------
     # Step 1: Prune COICOP nomenclature
     # -----------------------------------------------------------------------
     - name: prune-coicop
       inputs:
         parameters:
           - name: config
+            value: config/config.yaml
       container:
         image: inseefrlab/onyxia-vscode-python:py3.13.12
         command: [sh, -c]
@@ -227,6 +262,7 @@ spec:
       inputs:
         parameters:
           - name: config
+            value: config/config.yaml
       container:
         image: inseefrlab/onyxia-vscode-python:py3.13.12
         command: [sh, -c]
@@ -271,6 +307,7 @@ spec:
       inputs:
         parameters:
           - name: config
+            value: config/config.yaml
       container:
         image: inseefrlab/onyxia-vscode-python:py3.13.12
         command: [sh, -c]
@@ -340,6 +377,7 @@ spec:
       inputs:
         parameters:
           - name: config
+            value: config/config.yaml
           - name: sample_size
           - name: model-name
       container:
