@@ -13,9 +13,17 @@ uv sync
 Le pipeline est orchestré via Argo Workflows (`argo/pipeline.yaml`) selon le DAG suivant :
 
 ```
-prune-coicop ──→ create-vector-db ──┐
-             └──→ prune-annotations ──┘──→ run-rag
+                   ┌──→ prune-coicop ──→ create-vector-db ──┐
+preprocessing ─────┤                                         ├──→ run-rag
+                   └──→ prune-annotations ───────────────────┘
 ```
+
+### preprocessing (construction-dataset)
+
+Construit le dataset d'annotations à partir des sources brutes (COPAIN, historique, suggester).
+
+- Clone et exécute le repo `construction-dataset`
+- Exporte le dataset consolidé sur S3
 
 ### 0_prunning_coicop.py
 

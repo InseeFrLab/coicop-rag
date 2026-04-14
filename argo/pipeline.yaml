@@ -29,13 +29,18 @@ spec:
     # -----------------------------------------------------------------------
     # Main pipeline: DAG with parallelism
     #
-    #   prune-coicop ──→ create-vector-db ──┐
-    #              └──→ prune-annotations ──┘──→ run-rag
+    #                    ┌──→ prune-coicop ──→ create-vector-db ──┐
+    #   preprocessing ──┤                                         ├──→ run-rag
+    #                    └──→ prune-annotations ─────────────────┘
     # -----------------------------------------------------------------------
     - name: pipeline
       dag:
         tasks:
+          - name: preprocessing
+            template: preprocessing
+
           - name: prune-coicop
+            dependencies: [preprocessing]
             template: prune-coicop
             arguments:
               parameters:
@@ -43,7 +48,7 @@ spec:
                   value: "{{workflow.parameters.config}}"
 
           - name: prune-annotations
-            dependencies: [prune-coicop]
+            dependencies: [preprocessing]
             template: prune-annotations
             arguments:
               parameters:
@@ -71,6 +76,53 @@ spec:
                   value: "{{workflow.parameters.model-name}}"
 
     # -----------------------------------------------------------------------
+    # Step 0: Preprocessing — construction du dataset
+    # -----------------------------------------------------------------------
+    - name: preprocessing
+      container:
+        image: inseefrlab/onyxia-vscode-python:py3.13.12
+        command: [sh, -c]
+        args:
+          - |
+            set -e
+            git clone --branch main https://git.lab.sspcloud.fr/ssplab/experimentation-bdf/construction-dataset.git repo && cd repo
+            uv sync
+            uv run main.py
+        env:
+          - name: AWS_ACCESS_KEY_ID
+            valueFrom:
+              secretKeyRef:
+                name: secret-rag
+                key: AWS_ACCESS_KEY_ID
+          - name: AWS_SECRET_ACCESS_KEY
+            valueFrom:
+              secretKeyRef:
+                name: secret-rag
+                key: AWS_SECRET_ACCESS_KEY
+          - name: AWS_SESSION_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: secret-rag
+                key: AWS_SESSION_TOKEN
+          - name: AWS_S3_ENDPOINT
+            valueFrom:
+              secretKeyRef:
+                name: secret-rag
+                key: AWS_S3_ENDPOINT
+          - name: AWS_ENDPOINT_URL
+            valueFrom:
+              secretKeyRef:
+                name: secret-rag
+                key: AWS_ENDPOINT_URL
+        resources:
+          requests:
+            memory: 2Gi
+            cpu: 100m
+          limits:
+            memory: 50Gi
+            cpu: 15000m
+
+    # -----------------------------------------------------------------------
     # Step 1: Prune COICOP nomenclature
     # -----------------------------------------------------------------------
     - name: prune-coicop
@@ -83,7 +135,7 @@ spec:
         args:
           - |
             set -e
-            git clone --branch dev https://github.com/InseeFrLab/coicop-rag.git repo && cd repo
+            git clone --branch main https://github.com/InseeFrLab/coicop-rag.git repo && cd repo
             uv run scripts/0_prunning_coicop.py --config {{inputs.parameters.config}}
         env:
           - name: AWS_ACCESS_KEY_ID
@@ -127,7 +179,7 @@ spec:
         args:
           - |
             set -e
-            git clone --branch dev https://github.com/InseeFrLab/coicop-rag.git repo && cd repo
+            git clone --branch main https://github.com/InseeFrLab/coicop-rag.git repo && cd repo
             uv run scripts/1_prune_annotations.py --config {{inputs.parameters.config}}
         env:
           - name: AWS_ACCESS_KEY_ID
@@ -171,7 +223,7 @@ spec:
         args:
           - |
             set -e
-            git clone --branch dev https://github.com/InseeFrLab/coicop-rag.git repo && cd repo
+            git clone --branch main https://github.com/InseeFrLab/coicop-rag.git repo && cd repo
             uv run scripts/0_create_vector_db.py --config {{inputs.parameters.config}}
         env:
           - name: AWS_ACCESS_KEY_ID
@@ -242,7 +294,7 @@ spec:
         args:
           - |
             set -e
-            git clone --branch dev https://github.com/InseeFrLab/coicop-rag.git repo && cd repo
+            git clone --branch main https://github.com/InseeFrLab/coicop-rag.git repo && cd repo
             mkdir -p logs prompts
 
             ARGS="--config {{inputs.parameters.config}}"
