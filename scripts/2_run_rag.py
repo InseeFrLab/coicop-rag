@@ -435,16 +435,11 @@ def initialize_clients(config):
     )
     logger.info(f"  → Qdrant collection: {config['qdrant']['collection_name']}")
     
-    # LLM connection
-    logger.info("  → Connecting to LLM...")
-    # client_llm = OpenAI(
-    #     api_key=os.environ["OLLAMA_API_KEY"],
-    #     base_url=os.environ["OLLAMA_URL"]
-    # )
-    logger.info("  → Connecting to vLLM generation model...")
+    # LLM generation connection — llm.lab
+    logger.info("  → Connecting to llm.lab generation model...")
     client_vllm_gen = OpenAI(
-        base_url=os.environ["VLLM_GENERATION_URL"],
-        api_key=os.environ["VLLM_GENERATION_API_KEY"]
+        base_url=os.environ["OLLAMA_URL"],
+        api_key=os.environ["OLLAMA_API_KEY"],
     )
 
     client_vllm_emb = OpenAI(
@@ -452,28 +447,14 @@ def initialize_clients(config):
         api_key=os.environ["VLLM_EMBEDDING_API_KEY"]
     )
 
-    try:
-        models = client_vllm_gen.models.list()
-        
-        if not models.data:
-            raise ValueError("No generation model in vLLM server.")
-
-        server_model_id = models.data[0].id
-        expected_model_id = config["llm"]["model_name"]
-
-        if server_model_id != expected_model_id:
-            raise ValueError(
-                f"Model mismatch : server='{server_model_id}' "
-                f"vs config='{expected_model_id}'"
-            )
-
-        print("✔ Valid VLLM model with config")
-
-    except KeyError as e:
-        print(f"Missing config key : {e}")
-
-    except Exception as e:
-        print(f"Error between vllm's model and config : {e}")
+    models = client_vllm_gen.models.list()
+    available = [m.id for m in models.data]
+    expected_model_id = config["llm"]["model_name"]
+    if expected_model_id not in available:
+        raise ValueError(
+            f"Modèle '{expected_model_id}' absent de llm.lab — disponibles : {available}"
+        )
+    logger.info("✔ Modèle '%s' disponible sur llm.lab", expected_model_id)
     
     try:
         models = client_vllm_emb.models.list()

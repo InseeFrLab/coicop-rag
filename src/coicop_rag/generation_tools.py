@@ -73,16 +73,19 @@ def _is_retryable(exc: BaseException) -> bool:
 async def _call_with_retry(client: AsyncOpenAI, config: dict, message: list) -> Any:
     """Single API call with exponential retry."""
     try:
-        extra_body = {"guided_json": ReponseFormat.model_json_schema()}
-        if backend := config["llm"].get("guided_decoding_backend"):
-            extra_body["guided_decoding_backend"] = backend
-
         return await client.chat.completions.create(
             model=config["llm"]["model_name"],
             messages=message,
             temperature=config["llm"]["temperature"],
             max_tokens=config["llm"]["max_tokens"],
-            extra_body=extra_body,
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "ReponseFormat",
+                    "schema": ReponseFormat.model_json_schema(),
+                    "strict": True,
+                },
+            },
         )
     except Exception as exc:
         if not _is_retryable(exc):
